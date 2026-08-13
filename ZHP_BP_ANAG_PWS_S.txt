@@ -1,0 +1,80 @@
+*&---------------------------------------------------------------------*
+*&  Include           ZHP_BP_ANAG_PWS_V2_S
+*&---------------------------------------------------------------------*
+
+SELECTION-SCREEN BEGIN OF BLOCK fr0 WITH FRAME TITLE text-001.
+PARAMETERS: p_data TYPE dats OBLIGATORY.
+PARAMETERS: p_time TYPE syst_uzeit.
+SELECTION-SCREEN END OF BLOCK fr0.
+
+*--- Sorgente PERNR ---------------------------------------------------
+SELECTION-SCREEN BEGIN OF BLOCK b0 WITH FRAME TITLE text-h00.
+
+SELECT-OPTIONS: s_bukrs FOR pa0001-bukrs.   " Società (vuoto = tutte)
+
+SELECTION-SCREEN SKIP.
+" Attivi alla data di produzione
+PARAMETERS: p_atti   AS CHECKBOX DEFAULT 'X' USER-COMMAND atti.
+" Cessati con data fine nel range indicato
+PARAMETERS: p_cess   AS CHECKBOX DEFAULT 'X' USER-COMMAND cess.
+PARAMETERS: p_mesi  TYPE DLYMO DEFAULT 1,
+            p_dtinz TYPE dats,
+            p_dtfin TYPE dats.
+
+SELECTION-SCREEN SKIP.
+" Elenco CID da select-option manuale
+PARAMETERS: p_manu   AS CHECKBOX DEFAULT ' ' USER-COMMAND manu.
+SELECT-OPTIONS: s_pernr FOR pa0001-pernr.
+
+SELECTION-SCREEN SKIP.
+" File locale (PC)  -- mutuamente esclusivo con file server
+PARAMETERS: p_floc   AS CHECKBOX DEFAULT ' ' USER-COMMAND floc.
+PARAMETERS: path     LIKE rlgrap-filename.
+
+SELECTION-SCREEN SKIP.
+" File server ABAP  -- mutuamente esclusivo con file locale
+PARAMETERS: p_fsrv   AS CHECKBOX DEFAULT ' ' USER-COMMAND fsrv.
+PARAMETERS: path_srv TYPE pfeflnamel LOWER CASE.
+SELECTION-SCREEN COMMENT /1(79) text-c01.  "-> Es: /ftphcm/input/pernr.txt
+
+SELECTION-SCREEN END OF BLOCK b0.
+
+SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE text-h01.
+SELECT-OPTIONS: s_dip FOR pa0001-persk.
+SELECT-OPTIONS: s_dir FOR pa0001-persk.
+SELECTION-SCREEN END OF BLOCK b1.
+
+SELECTION-SCREEN BEGIN OF BLOCK fr3 WITH FRAME TITLE text-003.
+PARAMETERS: p_split AS CHECKBOX DEFAULT 'X'.
+
+SELECTION-SCREEN SKIP.
+" File unico: dir attivi, dir cessati, dip attivi, dip cessati
+PARAMETERS: p_uniq  AS CHECKBOX DEFAULT ' ' USER-COMMAND uniq.
+PARAMETERS: p_puniq TYPE pfeflnamel LOWER CASE DEFAULT '/ftphcm/tr/pws/out/'.
+SELECTION-SCREEN COMMENT /1(79) text-c02.  "-> Terminare con / se cartella
+
+SELECTION-SCREEN SKIP.
+PARAMETERS: p_dip   AS CHECKBOX DEFAULT 'X' USER-COMMAND dip.
+"SELECT-OPTIONS: s_dip FOR pa0001-persk.
+PARAMETERS: p_pdip  TYPE pfeflnamel LOWER CASE DEFAULT '/ftphcm/dip/tr/pws/out/'.
+PARAMETERS: p_dipbck   AS CHECKBOX DEFAULT 'X' USER-COMMAND dipbck.
+PARAMETERS: p_pdipbk  TYPE pfeflnamel LOWER CASE DEFAULT '/ftphcm/backup/dip/tr/pws/out/'.
+SELECTION-SCREEN COMMENT /1(79) text-c02.  "-> Terminare con / se cartella
+
+SELECTION-SCREEN SKIP.
+PARAMETERS: p_dir   AS CHECKBOX DEFAULT 'X' USER-COMMAND dir.
+"SELECT-OPTIONS: s_dir FOR pa0001-persk.
+PARAMETERS: p_pdir  TYPE pfeflnamel LOWER CASE DEFAULT '/ftphcm/dir/tr/pws/out/'.
+PARAMETERS: p_dirbck   AS CHECKBOX DEFAULT 'X' USER-COMMAND dirbck.
+PARAMETERS: p_pdirbk  TYPE pfeflnamel LOWER CASE DEFAULT '/ftphcm/backup/dir/tr/pws/out/'.
+SELECTION-SCREEN COMMENT /1(79) text-c02.  "-> Terminare con / se cartella
+
+SELECTION-SCREEN END OF BLOCK fr3.
+
+*--- Invio mail -------------------------------------------------------
+SELECTION-SCREEN BEGIN OF BLOCK fr4 WITH FRAME TITLE text-h04.
+PARAMETERS:  p_mail  AS CHECKBOX DEFAULT ' ' USER-COMMAND mail.
+SELECT-OPTIONS: s_rcpta  FOR ls_ztmit_anag-upn LOWER CASE NO INTERVALS.
+SELECT-OPTIONS: s_rcptcc FOR ls_ztmit_anag-upn LOWER CASE NO INTERVALS.
+SELECTION-SCREEN COMMENT /1(79) text-c04.
+SELECTION-SCREEN END OF BLOCK fr4.

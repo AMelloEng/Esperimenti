@@ -1,0 +1,1736 @@
+*&---------------------------------------------------------------------*
+*&  Include           ZHP_BP_ANAG_PWS_V2_F
+*&---------------------------------------------------------------------*
+
+*&---------------------------------------------------------------------*
+*& MATCH CODE PATH (F4 su percorso locale)
+*&---------------------------------------------------------------------*
+FORM match_code_path  CHANGING f_lcl LIKE rlgrap-filename.
+
+  DATA: file_selected LIKE ibipparms-path.
+
+  CALL FUNCTION 'F4_FILENAME'
+    EXPORTING
+      program_name  = '*.*'
+      dynpro_number = '*.*'
+      field_name    = '*.*'
+    IMPORTING
+      file_name     = file_selected.
+
+  MOVE: file_selected TO f_lcl.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& IMPOSTA INPUT
+*&---------------------------------------------------------------------*
+FORM imposta_input.
+
+  p_data  = sy-datum.
+  p_time  = sy-uzeit.
+***  p_data+6(02) = '01'. "commentato in quanto per i neoassunto l'anagrafica potrebbe non essere presente al primo del mese
+
+  p_pdip   = '/ftphcm/dip/tr/pws/out/'.
+  p_pdipbk = '/ftphcm/backup/dip/tr/pws/out/'.
+  p_pdir   = '/ftphcm/dir/tr/pws/out/'.
+  p_pdirbk = '/ftphcm/backup/dir/tr/pws/out/'.
+
+  " ----- Valori di default per S_BUKRS (società) --------------------
+  DATA: lt_bukrs_def TYPE TABLE OF bukrs,
+        lv_bukrs     TYPE bukrs.
+
+  APPEND '0021' TO lt_bukrs_def.
+  APPEND '0022' TO lt_bukrs_def.
+  APPEND 'BPF'  TO lt_bukrs_def.
+  APPEND 'EPI'  TO lt_bukrs_def.
+  APPEND 'IND'  TO lt_bukrs_def.
+  APPEND 'KPT'  TO lt_bukrs_def.
+  APPEND 'NEX'  TO lt_bukrs_def.
+  APPEND 'PGO'  TO lt_bukrs_def.
+  APPEND 'PLG'  TO lt_bukrs_def.
+  APPEND 'PSL'  TO lt_bukrs_def.
+  APPEND 'PSM'  TO lt_bukrs_def.
+  APPEND 'PTA'  TO lt_bukrs_def.
+  APPEND 'PWS'  TO lt_bukrs_def.
+  APPEND 'SDA'  TO lt_bukrs_def.
+  APPEND 'PIB'  TO lt_bukrs_def.
+  APPEND 'PAC'  TO lt_bukrs_def.
+
+  LOOP AT lt_bukrs_def INTO lv_bukrs.
+    s_bukrs-sign   = 'I'.
+    s_bukrs-option = 'EQ'.
+    s_bukrs-low    = lv_bukrs.
+    APPEND s_bukrs.
+  ENDLOOP.
+
+  " ----- Valori di default per S_DIR (classi dirigenti) -------------
+  DO 10 TIMES.
+    DATA(lv_val) = |Z{ sy-index - 1 }|.
+    CHECK lv_val <> 'Z1'.
+    s_dir-sign   = 'I'.
+    s_dir-option = 'EQ'.
+    s_dir-low    = lv_val.
+    APPEND s_dir.
+  ENDDO.
+
+  " ----- Valori di default per S_DIP (classi dipendenti) -------------
+  s_dip-sign   = 'I'.
+  s_dip-option = 'EQ'.
+  s_dip-low    = 'IM'.
+  APPEND s_dip.
+  s_dip-sign   = 'I'.
+  s_dip-option = 'EQ'.
+  s_dip-low    = 'QD'.
+  APPEND s_dip.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& GESTIONE DINAMICA SCREEN (attiva/disattiva campi)
+*&---------------------------------------------------------------------*
+FORM gestisci_screen.
+
+  IF p_dip = abap_false.
+    p_dipbck = abap_false.
+  ENDIF.
+
+  IF p_dir = abap_false.
+    p_dirbck = abap_false.
+  ENDIF.
+
+
+  IF p_uniq = abap_true AND gv_uniq_prev = abap_false.
+    p_dip        = abap_false.
+    p_dir        = abap_false.
+    p_split      = abap_false.
+    gv_uniq_prev = abap_true.
+  ELSEIF p_uniq = abap_false AND gv_uniq_prev = abap_true.
+    p_dip        = abap_true.
+    p_dir        = abap_true.
+    p_split      = abap_true.
+    gv_uniq_prev = abap_false.
+  ENDIF.
+
+  IF screen-name CS 'S_RCPTA'  OR screen-name CS 'S_RCPTCC'.
+    screen-input = COND #( WHEN p_mail = abap_true THEN 1 ELSE 0 ).
+  ENDIF.
+
+  LOOP AT SCREEN.
+
+    IF p_uniq = abap_true.
+      IF screen-name = 'P_SPLIT' OR
+         screen-name = 'P_DIP'   OR
+         screen-name = 'P_PDIP'  OR
+         screen-name = 'P_DIR'   OR
+***         screen-name = 'S_DIR-LOW' OR screen-name = 'S_DIR-HIGH' OR
+         screen-name = 'P_PDIR'.
+        screen-input = 0.
+      ENDIF.
+    ELSE.
+      IF screen-name = 'P_SPLIT'  OR
+         screen-name = 'P_DIP'    OR screen-name = 'P_DIR' OR
+         screen-name = 'P_DIPBCK' OR screen-name = 'P_DIRBCK'.
+        screen-input = 1.
+      ENDIF.
+      IF screen-name = 'P_PDIP' OR screen-name = 'P_PDIPBCK' OR
+**         screen-name = 'S_DIP-LOW' OR screen-name = 'S_DIP-HIGH'.
+        screen-input = COND #( WHEN p_dip = abap_true THEN 1 ELSE 0 ).
+      ENDIF.
+      IF screen-name = 'P_PDIR'    OR screen-name = 'P_PDIRBCK' OR
+***         screen-name = 'S_DIR-LOW' OR screen-name = 'S_DIR-HIGH'.
+        screen-input = COND #( WHEN p_dir = abap_true THEN 1 ELSE 0 ).
+      ENDIF.
+    ENDIF.
+
+    IF screen-name = 'P_PUNIQ'.
+      screen-input = COND #( WHEN p_uniq = abap_true THEN 1 ELSE 0 ).
+    ENDIF.
+    IF screen-name = 'P_DTINZ' OR screen-name = 'P_DTFIN'.
+      screen-input = COND #( WHEN p_cess = abap_true THEN 1 ELSE 0 ).
+    ENDIF.
+    IF screen-name = 'S_PERNR-LOW' OR screen-name = 'S_PERNR-HIGH'.
+      screen-input = COND #( WHEN p_manu = abap_true THEN 1 ELSE 0 ).
+    ENDIF.
+    IF screen-name = 'PATH'.
+      screen-input = COND #( WHEN p_floc = abap_true THEN 1 ELSE 0 ).
+    ENDIF.
+    IF screen-name = 'P_FLOC'.
+      screen-input = COND #( WHEN p_fsrv = abap_true THEN 0 ELSE 1 ).
+    ENDIF.
+    IF screen-name = 'PATH_SRV'.
+      screen-input = COND #( WHEN p_fsrv = abap_true THEN 1 ELSE 0 ).
+    ENDIF.
+    IF screen-name = 'P_FSRV'.
+      screen-input = COND #( WHEN p_floc = abap_true THEN 0 ELSE 1 ).
+    ENDIF.
+
+    MODIFY SCREEN.
+  ENDLOOP.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& CONTROLLA INPUT
+*&---------------------------------------------------------------------*
+FORM controlla_input.
+
+  IF p_floc = abap_true AND p_fsrv = abap_true.
+    MESSAGE e398(00) WITH 'File locale e file server non possono essere selezionati insieme'.
+  ENDIF.
+  IF p_pdir CS '\'.
+    MESSAGE e398(00) WITH |Percorso { p_pdir } non coerente per opzione indicata|.
+  ENDIF.
+  IF p_pdip CS '\'.
+    MESSAGE e398(00) WITH |Percorso { p_pdip } non coerente per opzione indicata|.
+  ENDIF.
+  IF p_puniq IS NOT INITIAL AND p_puniq CS '\'.
+    MESSAGE e398(00) WITH |Percorso { p_puniq } non coerente per opzione indicata|.
+  ENDIF.
+  IF p_atti = abap_false AND p_cess  = abap_false AND
+     p_manu = abap_false AND p_floc  = abap_false AND
+     p_fsrv = abap_false.
+    MESSAGE e398(00) WITH 'Indicare almeno una sorgente per i PERNR'.
+  ENDIF.
+  IF p_cess = abap_true.
+    IF p_dtinz IS INITIAL OR p_dtfin IS INITIAL.
+      MESSAGE e398(00) WITH 'Indicare data DA e data A per i cessati'.
+    ENDIF.
+    IF p_dtinz > p_dtfin.
+      MESSAGE e398(00) WITH 'Data cessazione DA deve essere <= data A'.
+    ENDIF.
+  ENDIF.
+  IF gv_uniq_prev = abap_false.
+    IF p_dip = abap_false AND p_dir = abap_false AND p_uniq = abap_false.
+      MESSAGE e398(00) WITH 'Selezionare almeno un tipo di output'.
+    ENDIF.
+  ENDIF.
+  IF p_uniq = abap_true AND p_puniq IS INITIAL.
+    MESSAGE e398(00) WITH 'Indicare il percorso per il file unico'.
+  ENDIF.
+
+  IF p_dip = abap_true AND p_pdip IS INITIAL.
+    MESSAGE e398(00) WITH 'Indicare il percorso per output dipendenti'.
+  ENDIF.
+
+  IF p_dir = abap_true AND p_pdir IS INITIAL.
+    MESSAGE e398(00) WITH 'Indicare il percorso per output dirigenti'.
+  ENDIF.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& GET CID FROM CSV (file locale PC)
+*&---------------------------------------------------------------------*
+FORM get_cid_from_csv  TABLES   gt_inp STRUCTURE wa_input
+                        USING   f_lcl  TYPE       rlgrap-filename.
+
+  DATA: p_file TYPE string,
+        p_raw  TYPE string,
+        p_tab  TYPE TABLE OF string,
+        lv_cnt TYPE i.
+
+  CHECK f_lcl IS NOT INITIAL AND p_floc = abap_true.
+  p_file = f_lcl.
+
+  CALL METHOD cl_gui_frontend_services=>gui_upload
+    EXPORTING
+      filename                = p_file
+    CHANGING
+      data_tab                = p_tab
+    EXCEPTIONS
+      file_open_error         = 1
+      file_read_error         = 2
+      no_batch                = 3
+      gui_refuse_filetransfer = 4
+      invalid_type            = 5
+      no_authority            = 6
+      unknown_error           = 7
+      bad_data_format         = 8
+      header_not_allowed      = 9
+      separator_not_allowed   = 10
+      header_too_long         = 11
+      unknown_dp_error        = 12
+      access_denied           = 13
+      dp_out_of_memory        = 14
+      disk_full               = 15
+      dp_timeout              = 16
+      not_supported_by_gui    = 17
+      error_no_gui            = 18
+      OTHERS                  = 19.
+
+  IF sy-subrc <> 0.
+    MESSAGE w398(00) WITH |Errore lettura file locale: { f_lcl }|.
+    RETURN.
+  ENDIF.
+
+  LOOP AT p_tab INTO p_raw.
+    CONDENSE p_raw NO-GAPS.
+    CHECK p_raw IS NOT INITIAL.
+    APPEND VALUE ts_input( pernr = p_raw ) TO gt_inp.
+    ADD 1 TO lv_cnt.
+  ENDLOOP.
+
+  msg = | - PERNR da file locale ({ f_lcl }): { lv_cnt }|.
+  WRITE: / msg.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& GET CID FROM CSV SERVER (file su application server)
+*&---------------------------------------------------------------------*
+FORM get_cid_from_csv_server TABLES   gt_inp STRUCTURE wa_input
+                              USING   f_srv  TYPE       pfeflnamel.
+
+  DATA: lv_line TYPE string,
+        lv_cnt  TYPE i.
+
+  CHECK f_srv IS NOT INITIAL AND p_fsrv = abap_true.
+
+  OPEN DATASET f_srv FOR INPUT IN TEXT MODE ENCODING UTF-8.
+  IF sy-subrc <> 0.
+    MESSAGE w398(00) WITH |Impossibile aprire file server: { f_srv }|.
+    RETURN.
+  ENDIF.
+
+  DO.
+    READ DATASET f_srv INTO lv_line.
+    IF sy-subrc <> 0. EXIT. ENDIF.
+    CONDENSE lv_line NO-GAPS.
+    CHECK lv_line IS NOT INITIAL.
+    APPEND VALUE ts_input( pernr = lv_line ) TO gt_inp.
+    ADD 1 TO lv_cnt.
+  ENDDO.
+
+  CLOSE DATASET f_srv.
+
+  msg = | - PERNR da file server ({ f_srv }): { lv_cnt }|.
+  WRITE: / msg.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& GET PERNR ATTIVI (da PA0001 alla data di riferimento)
+*& Popola anche gt_attivi (hashed) per uso in CARICA_ANAGRAFICA
+*&---------------------------------------------------------------------*
+FORM get_pernr_attivi.
+
+  DATA: lv_cnt TYPE i.
+
+***  CHECK p_atti = abap_true.
+
+  SELECT pernr, begda, endda, persg INTO TABLE @DATA(lt_pa0001) FROM pa0001
+    WHERE begda <= @p_data
+      AND endda >= @p_data
+      AND bukrs IN @s_bukrs
+      AND persg  = '1'.
+
+  SORT lt_pa0001 BY pernr begda DESCENDING.
+  DELETE ADJACENT DUPLICATES FROM lt_pa0001 COMPARING pernr.
+
+  LOOP AT lt_pa0001 INTO DATA(ls_pa0001).
+    INSERT VALUE ts_input( pernr = ls_pa0001-pernr
+                           begda = ls_pa0001-begda
+                           endda = ls_pa0001-endda
+                           persg = ls_pa0001-persg ) INTO TABLE gt_attivi.
+  ENDLOOP.
+
+***  lv_cnt = lines( lt_pa0001 ).
+***  msg = | - PERNR attivi da PA0001 (al { p_data }): { lv_cnt }|.
+***  WRITE: / msg.
+
+ENDFORM.
+
+
+*&---------------------------------------------------------------------*
+*& GET PERNR CESSATI (data fine PA0001 nel range p_dtinz - p_dtfin)
+*& Popola gt_cessati (hashed) per uso in CARICA_ANAGRAFICA
+*& Non controlla se attivo: lo farà CARICA_ANAGRAFICA
+*&---------------------------------------------------------------------*
+FORM get_pernr_cessati.
+
+***  DATA: lv_cnt TYPE i.
+
+***  CHECK p_cess = abap_true.
+
+  SELECT pernr, begda, endda, persg INTO TABLE @DATA(lt_pa0001) FROM pa0001
+    WHERE begda >= @p_dtinz
+      AND begda <= @p_dtfin
+      AND bukrs IN @s_bukrs
+      AND persg  = '4'.
+
+  SORT lt_pa0001 BY pernr begda DESCENDING.
+  DELETE ADJACENT DUPLICATES FROM lt_pa0001 COMPARING pernr.
+
+  LOOP AT lt_pa0001 INTO DATA(ls_pa0001).
+    INSERT VALUE ts_input( pernr = ls_pa0001-pernr
+                           begda = ls_pa0001-begda
+                           endda = ls_pa0001-endda
+                           persg = ls_pa0001-persg ) INTO TABLE gt_cessati.
+***    ADD 1 TO lv_cnt.
+  ENDLOOP.
+
+***  msg = | - PERNR cessati da PA0001 ({ p_dtinz } - { p_dtfin }): { lv_cnt }|.
+***  WRITE: / msg.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& CARICA DATI (bulk load con chunking per grandi volumi)
+*&---------------------------------------------------------------------*
+FORM carica_dati_per_anagrafica.
+
+  CONSTANTS: lc_chunk_size TYPE i VALUE 5000.
+
+  DATA: lt_chunk_pernr TYPE TABLE OF ts_input,
+        lv_idx_from    TYPE i VALUE 1,
+        lv_idx_to      TYPE i,
+        lv_tot         TYPE i.
+
+  lv_tot = lines( s_pernr ).
+
+  " ---- PA0001 -------------------------------------------------------
+  CLEAR gt_pa0001.
+  lv_idx_from = 1.
+  WHILE lv_idx_from <= lv_tot.
+    lv_idx_to = lv_idx_from + lc_chunk_size - 1.
+    IF lv_idx_to > lv_tot. lv_idx_to = lv_tot. ENDIF.
+    CLEAR lt_chunk_pernr.
+    LOOP AT s_pernr INTO DATA(ls_sel3) FROM lv_idx_from TO lv_idx_to.
+      APPEND VALUE ts_input( pernr = ls_sel3-low ) TO lt_chunk_pernr.
+    ENDLOOP.
+    IF lt_chunk_pernr IS NOT INITIAL.
+      DATA: lt_tmp_0001 TYPE TABLE OF ts_pa0001.
+      SELECT pernr begda bukrs werks persg persk orgeh
+        INTO CORRESPONDING FIELDS OF TABLE lt_tmp_0001
+        FROM pa0001
+        FOR ALL ENTRIES IN lt_chunk_pernr
+        WHERE pernr  = lt_chunk_pernr-pernr
+          AND begda <= p_data
+          AND endda >= p_data
+          AND bukrs IN s_bukrs.
+      APPEND LINES OF lt_tmp_0001 TO gt_pa0001.
+    ENDIF.
+    lv_idx_from = lv_idx_to + 1.
+  ENDWHILE.
+  SORT gt_pa0001 BY pernr.
+  DELETE ADJACENT DUPLICATES FROM gt_pa0001 COMPARING pernr.
+
+  " ---- PA0002 -------------------------------------------------------
+  CLEAR gt_pa0002.
+  lv_idx_from = 1.
+  WHILE lv_idx_from <= lv_tot.
+    lv_idx_to = lv_idx_from + lc_chunk_size - 1.
+    IF lv_idx_to > lv_tot. lv_idx_to = lv_tot. ENDIF.
+    CLEAR lt_chunk_pernr.
+    LOOP AT s_pernr INTO DATA(ls_sel) FROM lv_idx_from TO lv_idx_to.
+      APPEND VALUE ts_input( pernr = ls_sel-low ) TO lt_chunk_pernr.
+    ENDLOOP.
+    IF lt_chunk_pernr IS NOT INITIAL.
+      DATA: lt_tmp_0002 TYPE TABLE OF ts_pa0002.
+      SELECT pernr vorna nachn perid INTO TABLE lt_tmp_0002 FROM pa0002
+        FOR ALL ENTRIES IN lt_chunk_pernr
+        WHERE pernr  = lt_chunk_pernr-pernr
+          AND begda <= p_data
+          AND endda >= p_data.
+      APPEND LINES OF lt_tmp_0002 TO gt_pa0002.
+    ENDIF.
+    lv_idx_from = lv_idx_to + 1.
+  ENDWHILE.
+  SORT gt_pa0002 BY pernr.
+  DELETE ADJACENT DUPLICATES FROM gt_pa0002 COMPARING pernr.
+
+  " ---- PA0105 -------------------------------------------------------
+  CLEAR gt_pa0105.
+  lv_idx_from = 1.
+  WHILE lv_idx_from <= lv_tot.
+    lv_idx_to = lv_idx_from + lc_chunk_size - 1.
+    IF lv_idx_to > lv_tot. lv_idx_to = lv_tot. ENDIF.
+    CLEAR lt_chunk_pernr.
+    LOOP AT s_pernr INTO DATA(ls_sel2) FROM lv_idx_from TO lv_idx_to.
+      APPEND VALUE ts_input( pernr = ls_sel2-low ) TO lt_chunk_pernr.
+    ENDLOOP.
+    IF lt_chunk_pernr IS NOT INITIAL.
+      DATA: lt_tmp_0105 TYPE TABLE OF ts_pa0105.
+      SELECT pernr zmail INTO CORRESPONDING FIELDS OF TABLE lt_tmp_0105
+        FROM pa0105
+        FOR ALL ENTRIES IN lt_chunk_pernr
+        WHERE subty  = 'ZUPN'
+          AND pernr  = lt_chunk_pernr-pernr
+          AND begda <= p_data
+          AND endda >= p_data.
+      APPEND LINES OF lt_tmp_0105 TO gt_pa0105.
+    ENDIF.
+    lv_idx_from = lv_idx_to + 1.
+  ENDWHILE.
+  SORT gt_pa0105 BY pernr.
+  DELETE ADJACENT DUPLICATES FROM gt_pa0105 COMPARING pernr.
+
+  " ---- T001 ---------------------------------------------------------
+  CLEAR gt_t001.
+  DATA: lt_bukrs TYPE TABLE OF ts_t001.
+  LOOP AT gt_pa0001 INTO DATA(ls_0001_b).
+    APPEND VALUE ts_t001( bukrs = ls_0001_b-bukrs ) TO lt_bukrs.
+  ENDLOOP.
+  SORT lt_bukrs BY bukrs.
+  DELETE ADJACENT DUPLICATES FROM lt_bukrs COMPARING bukrs.
+  IF lt_bukrs IS NOT INITIAL.
+    SELECT bukrs butxt INTO TABLE gt_t001 FROM t001
+      FOR ALL ENTRIES IN lt_bukrs
+      WHERE bukrs = lt_bukrs-bukrs.
+  ENDIF.
+  SORT gt_t001 BY bukrs.
+
+  " ---- Testi Werks --------------------------------------------------
+  CLEAR gt_werks_text.
+  DATA: lt_werks_tmp TYPE TABLE OF ts_werks_text.
+  LOOP AT gt_pa0001 INTO DATA(ls_0001_w).
+    APPEND VALUE ts_werks_text( werks = ls_0001_w-werks ) TO lt_werks_tmp.
+  ENDLOOP.
+  SORT lt_werks_tmp BY werks.
+  DELETE ADJACENT DUPLICATES FROM lt_werks_tmp COMPARING werks.
+  LOOP AT lt_werks_tmp INTO DATA(lw).
+    DATA: lv_wt TYPE t500p-name1.
+    CALL FUNCTION 'HRWPC_RFC_WERKS_TEXT_GET'
+      EXPORTING
+        werks      = lw-werks
+      IMPORTING
+        werks_text = lv_wt.
+    APPEND VALUE ts_werks_text( werks = lw-werks name1 = lv_wt ) TO gt_werks_text.
+    CLEAR lv_wt.
+  ENDLOOP.
+  SORT gt_werks_text BY werks.
+
+  " ---- Focal Point --------------------------------------------------
+  CLEAR gt_fp.
+  DATA: lt_orgs TYPE TABLE OF ts_fp.
+  LOOP AT gt_pa0001 INTO DATA(ls_0001_o).
+    APPEND VALUE ts_fp( orgeh = ls_0001_o-orgeh ) TO lt_orgs.
+  ENDLOOP.
+  SORT lt_orgs BY orgeh.
+  DELETE ADJACENT DUPLICATES FROM lt_orgs COMPARING orgeh.
+  LOOP AT lt_orgs INTO DATA(lo).
+    DATA: lv_cfp   TYPE hrp9202-focal_point,
+          lv_cfptx TYPE zmdit129-descr.
+    SELECT SINGLE focal_point INTO lv_cfp FROM hrp9202
+      WHERE plvar = '01' AND otype = 'O'
+        AND objid  = lo-orgeh
+        AND endda >= p_data
+        AND begda <= p_data.
+    IF sy-subrc = 0 AND lv_cfp IS NOT INITIAL.
+      SELECT SINGLE descr INTO lv_cfptx FROM zmdit129
+        WHERE cdfocalpoint = lv_cfp
+          AND endda >= p_data AND begda <= p_data.
+    ENDIF.
+    APPEND VALUE ts_fp( orgeh = lo-orgeh cod_fp = lv_cfp desc_fp = lv_cfptx ) TO gt_fp.
+    CLEAR: lv_cfp, lv_cfptx.
+  ENDLOOP.
+  SORT gt_fp BY orgeh.
+
+ENDFORM.
+
+
+*&---------------------------------------------------------------------*
+*& ESCLDI PER PERSK
+*& ora che abbiamo le info da IT0001 posso esludere da S_PAERN
+*& i PERNR in base al tipo dip PERSK
+*&---------------------------------------------------------------------*
+FORM escludi_per_persk.
+
+  DATA: lt_pernr_da_tenere TYPE TABLE OF ts_input.
+
+  " Cerca in gt_pa0001 (già caricata) i PERNR
+  " la cui persk rientra in s_dip o s_dir
+  LOOP AT gt_pa0001 INTO DATA(ls_0001).
+    IF ls_0001-persk IN s_dip OR ls_0001-persk IN s_dir.
+      APPEND VALUE ts_input( pernr = ls_0001-pernr ) TO lt_pernr_da_tenere.
+    ENDIF.
+  ENDLOOP.
+
+  " Ricostruisce s_pernr con i soli PERNR che hanno superato il filtro
+  CLEAR s_pernr[].
+  LOOP AT lt_pernr_da_tenere INTO DATA(ls_t).
+    s_pernr-sign   = 'I'.
+    s_pernr-option = 'EQ'.
+    s_pernr-low    = ls_t-pernr.
+    APPEND s_pernr.
+  ENDLOOP.
+
+ENDFORM.
+
+FORM carica_anagrafica USING    p_pernr   LIKE pa0001-pernr
+                       CHANGING p_anag    TYPE ts_anag
+                                p_err_blk TYPE abap_bool
+                                p_war_noblk TYPE abap_bool.
+
+  p_err_blk   = abap_false.
+  p_war_noblk = abap_false.
+
+  CLEAR: p_anag.
+  p_anag-cid = p_pernr.
+
+***  " ---- Flag cessato ------------------------------------------------
+***  READ TABLE gt_cessati WITH TABLE KEY pernr = p_pernr INTO DATA(wa). "TRANSPORTING NO FIELDS. Prima ho cancellato eventuali CIDcessato presente anche negli attivi
+***  "p_anag-cessato = COND #( WHEN sy-subrc = 0 THEN abap_true ELSE abap_false ).
+***  IF sy-subrc = 0.
+****    p_anag-cessato = abap_true.
+***    p_anag-begda   = wa-begda. "la data mi servirà per cancellare i record con CF uguale, mantenendo solo il pià recente
+***    p_anag-persg   = wa-persg.
+***  ELSE.
+****    p_anag-cessato = abap_false.
+***    CLEAR wa.
+***    READ TABLE gt_attivi WITH TABLE KEY pernr = p_pernr INTO wa. "TRANSPORTING NO FIELDS.
+***    p_anag-begda   = wa-begda. "la data mi servirà per cancellare i record con CF uguale, mantenendo solo il pià recente
+***    p_anag-persg   = wa-persg.
+***  ENDIF.
+
+  " ---- PA0001: letta PER PRIMA per avere bukrs disponibile ---------
+  CLEAR gs_pa0001.
+  READ TABLE gt_pa0001 INTO gs_pa0001 WITH KEY pernr = p_pernr BINARY SEARCH.
+  p_anag-begda   = gs_pa0001-begda. "mi servirà per cancellare i record con CF uguale, mantenendo solo il più recente
+  p_anag-persg   = gs_pa0001-persg. "mi servirà per cancellare i record con CF uguale, mantenendo solo il più recente e in forza
+
+  " Preimposta bukrs su gs_scarto: tutte le segnalazioni di questo
+  " PERNR riporteranno la società anche se manca in PA0001
+  CLEAR gs_scarto.
+  gs_scarto-bukrs = gs_pa0001-bukrs.                    " <-- NUOVO
+
+  " ---- PA0002 ------------------------------------------------------
+  CLEAR gs_pa0002.
+  READ TABLE gt_pa0002 INTO gs_pa0002 WITH KEY pernr = p_pernr BINARY SEARCH.
+
+  " Codice fiscale (PERID) - BLOCCANTE
+  IF gs_pa0002-perid IS INITIAL.
+    p_err_blk           = abap_true.
+*    CLEAR gs_scarto.
+    gs_scarto-pernr     = p_pernr.
+    gs_scarto-tipo      = 'E'.
+    gs_scarto-messaggio = |Codice fiscale (PERID) mancante|.
+    APPEND gs_scarto TO gt_scarti.
+  ELSE.
+    p_anag-codf = gs_pa0002-perid.
+  ENDIF.
+
+  " Cognome (NACHN) - BLOCCANTE
+  IF gs_pa0002-nachn IS INITIAL.
+    p_err_blk           = abap_true.
+*    CLEAR gs_scarto.
+    gs_scarto-pernr     = p_pernr.
+    gs_scarto-tipo      = 'E'.
+    gs_scarto-messaggio = |Cognome (NACHN) mancante|.
+    APPEND gs_scarto TO gt_scarti.
+  ELSE.
+    p_anag-cognome = gs_pa0002-nachn.
+  ENDIF.
+
+  " Nome (VORNA) - BLOCCANTE
+  IF gs_pa0002-vorna IS INITIAL.
+    p_err_blk           = abap_true.
+*    CLEAR gs_scarto.
+    gs_scarto-pernr     = p_pernr.
+    gs_scarto-tipo      = 'E'.
+    gs_scarto-messaggio = |Nome (VORNA) mancante|.
+    APPEND gs_scarto TO gt_scarti.
+  ELSE.
+    p_anag-nome = gs_pa0002-vorna.
+  ENDIF.
+
+  " ---- PA0105 ------------------------------------------------------
+  CLEAR gs_pa0105.
+  READ TABLE gt_pa0105 INTO gs_pa0105 WITH KEY pernr = p_pernr BINARY SEARCH.
+
+  IF gs_pa0105-zmail IS INITIAL.
+    p_war_noblk           = abap_true.
+*    CLEAR gs_scarto.
+    gs_scarto-pernr     = p_pernr.
+    gs_scarto-tipo      = 'W'.
+    gs_scarto-messaggio = |UPN (e-mail aziendale) mancante|.
+    APPEND gs_scarto TO gt_scarti.
+  ELSE.
+    p_anag-upn = gs_pa0105-zmail.
+  ENDIF.
+
+  " ---- PA0001 (già letta sopra, uso gs_pa0001 già valorizzato) -----
+  IF gs_pa0001-persk IS INITIAL.
+    p_war_noblk           = abap_true.
+*    CLEAR gs_scarto.
+    gs_scarto-pernr     = p_pernr.
+    gs_scarto-tipo      = 'W'.
+    gs_scarto-messaggio = |Tipo dipendente (PERSK) mancante|.
+    APPEND gs_scarto TO gt_scarti.
+  ELSE.
+    p_anag-tipo_dip = gs_pa0001-persk.
+  ENDIF.
+
+  IF gs_pa0001-werks IS INITIAL.
+    p_war_noblk           = abap_true.
+*    CLEAR gs_scarto.
+    gs_scarto-pernr     = p_pernr.
+    gs_scarto-tipo      = 'W'.
+    gs_scarto-messaggio = |Codice amministrazione (WERKS) mancante|.
+    APPEND gs_scarto TO gt_scarti.
+  ELSE.
+    p_anag-cod_amm = gs_pa0001-werks.
+  ENDIF.
+
+  " ---- T001 --------------------------------------------------------
+  DATA: ls_t001 TYPE ts_t001.
+  READ TABLE gt_t001 INTO ls_t001 WITH KEY bukrs = gs_pa0001-bukrs BINARY SEARCH.
+
+  IF gs_pa0001-bukrs IS INITIAL.
+    p_war_noblk           = abap_true.
+*    CLEAR gs_scarto.
+    gs_scarto-pernr     = p_pernr.
+    gs_scarto-tipo      = 'W'.
+    gs_scarto-messaggio = |Società (BUKRS) mancante in PA0001|.
+    APPEND gs_scarto TO gt_scarti.
+  ELSE.
+    p_anag-societa = gs_pa0001-bukrs.
+  ENDIF.
+
+  IF ls_t001-butxt IS INITIAL.
+    p_war_noblk           = abap_true.
+*    CLEAR gs_scarto.
+    gs_scarto-pernr     = p_pernr.
+    gs_scarto-tipo      = 'W'.
+    gs_scarto-messaggio = |Descrizione società (BUTXT) non trovata per { gs_pa0001-bukrs }|.
+    APPEND gs_scarto TO gt_scarti.
+  ELSE.
+    p_anag-desc_societa = ls_t001-butxt.
+  ENDIF.
+
+  " ---- Werks text --------------------------------------------------
+  DATA: ls_wt TYPE ts_werks_text.
+  READ TABLE gt_werks_text INTO ls_wt WITH KEY werks = gs_pa0001-werks BINARY SEARCH.
+
+  IF ls_wt-name1 IS INITIAL AND gs_pa0001-werks IS NOT INITIAL.
+    p_war_noblk           = abap_true.
+*    CLEAR gs_scarto.
+    gs_scarto-pernr     = p_pernr.
+    gs_scarto-tipo      = 'W'.
+    gs_scarto-messaggio = |Descrizione sede (WERKS { gs_pa0001-werks }) non trovata|.
+    APPEND gs_scarto TO gt_scarti.
+  ELSE.
+    p_anag-desc_amm = ls_wt-name1.
+  ENDIF.
+
+  " ---- Focal Point -------------------------------------------------
+  DATA: ls_fp TYPE ts_fp.
+  READ TABLE gt_fp INTO ls_fp WITH KEY orgeh = gs_pa0001-orgeh BINARY SEARCH.
+
+  IF ls_fp-cod_fp IS INITIAL.
+    p_war_noblk           = abap_true.
+*    CLEAR gs_scarto.
+    gs_scarto-pernr     = p_pernr.
+    gs_scarto-tipo      = 'W'.
+    gs_scarto-messaggio = |Focal Point mancante per unità organizzativa { gs_pa0001-orgeh }|.
+    APPEND gs_scarto TO gt_scarti.
+  ELSE.
+    p_anag-cod_fp  = ls_fp-cod_fp.
+    p_anag-desc_fp = ls_fp-desc_fp.
+  ENDIF.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& CARICA ANAGRAFICA
+*& Flag cessato determinato qui tramite gt_cessati / gt_attivi:
+*&   pernr in gt_cessati E NON in gt_attivi -> cessato = true
+*&   altrimenti                             -> cessato = false
+*& p_err_blk = abap_true  -> almeno un errore bloccante (CID da scartare)
+*& p_err_blk = abap_false -> nessun errore bloccante (CID da mantenere)
+*&---------------------------------------------------------------------*
+FORM carica_anagrafica_old2 USING    p_pernr   LIKE pa0001-pernr
+                       CHANGING p_anag    TYPE ts_anag
+                                p_err_blk TYPE abap_bool.
+
+  CLEAR: p_anag, p_err_blk.
+  p_err_blk  = abap_false.
+
+  p_anag-cid = p_pernr.
+
+***  " ---- Flag cessato ------------------------------------------------
+***  READ TABLE gt_cessati WITH TABLE KEY pernr = p_pernr
+***       TRANSPORTING NO FIELDS.
+***  IF sy-subrc = 0.
+***    READ TABLE gt_attivi WITH TABLE KEY pernr = p_pernr
+***         TRANSPORTING NO FIELDS.
+***    p_anag-cessato = COND #( WHEN sy-subrc <> 0 THEN abap_true
+***                                                 ELSE abap_false ).
+***  ELSE.
+***    p_anag-cessato = abap_false.
+***  ENDIF.
+
+  " ---- PA0002 ------------------------------------------------------
+  CLEAR gs_pa0002.
+  READ TABLE gt_pa0002 INTO gs_pa0002 WITH KEY pernr = p_pernr BINARY SEARCH.
+
+  " Codice fiscale (PERID) - BLOCCANTE
+  IF gs_pa0002-perid IS INITIAL.
+    p_err_blk = abap_true.
+    gs_scarto-pernr     = p_pernr.
+    gs_scarto-tipo      = 'E'.
+    gs_scarto-messaggio = |Codice fiscale (PERID) mancante in PA0002|.
+    APPEND gs_scarto TO gt_scarti.
+  ELSE.
+    p_anag-codf = gs_pa0002-perid.
+  ENDIF.
+
+  " Cognome (NACHN) - BLOCCANTE
+  IF gs_pa0002-nachn IS INITIAL.
+    p_err_blk = abap_true.
+    gs_scarto-pernr     = p_pernr.
+    gs_scarto-tipo      = 'E'.
+    gs_scarto-messaggio = |Cognome (NACHN) mancante in PA0002|.
+    APPEND gs_scarto TO gt_scarti.
+  ELSE.
+    p_anag-cognome = gs_pa0002-nachn.
+  ENDIF.
+
+  " Nome (VORNA) - BLOCCANTE
+  IF gs_pa0002-vorna IS INITIAL.
+    p_err_blk = abap_true.
+    gs_scarto-pernr     = p_pernr.
+    gs_scarto-tipo      = 'E'.
+    gs_scarto-messaggio = |Nome (VORNA) mancante in PA0002|.
+    APPEND gs_scarto TO gt_scarti.
+  ELSE.
+    p_anag-nome = gs_pa0002-vorna.
+  ENDIF.
+
+  " ---- PA0105 ------------------------------------------------------
+  CLEAR gs_pa0105.
+  READ TABLE gt_pa0105 INTO gs_pa0105 WITH KEY pernr = p_pernr BINARY SEARCH.
+
+  IF gs_pa0105-zmail IS INITIAL.
+    gs_scarto-pernr     = p_pernr.
+    gs_scarto-tipo      = 'W'.
+    gs_scarto-messaggio = |UPN mancante in PA0105, subty ZUPN|.
+    APPEND gs_scarto TO gt_scarti.
+  ELSE.
+    p_anag-upn = gs_pa0105-zmail.
+  ENDIF.
+
+  " ---- PA0001 ------------------------------------------------------
+  CLEAR gs_pa0001.
+  READ TABLE gt_pa0001 INTO gs_pa0001 WITH KEY pernr = p_pernr BINARY SEARCH.
+
+  " Preimposta bukrs su gs_scarto per tutte le segnalazioni di questo PERNR
+  gs_scarto-bukrs = gs_pa0001-bukrs.                    " <-- NUOVO
+
+  IF gs_pa0001-persk IS INITIAL.
+    gs_scarto-pernr     = p_pernr.
+    gs_scarto-tipo      = 'W'.
+    gs_scarto-messaggio = |Tipo dipendente (PERSK) mancante in PA0001|.
+    APPEND gs_scarto TO gt_scarti.
+  ELSE.
+    p_anag-tipo_dip = gs_pa0001-persk.
+  ENDIF.
+
+  IF gs_pa0001-werks IS INITIAL.
+    gs_scarto-pernr     = p_pernr.
+    gs_scarto-tipo      = 'W'.
+    gs_scarto-messaggio = |Codice amministrazione (WERKS) mancante in PA0001|.
+    APPEND gs_scarto TO gt_scarti.
+  ELSE.
+    p_anag-cod_amm = gs_pa0001-werks.
+  ENDIF.
+
+  " ---- T001 --------------------------------------------------------
+  DATA: ls_t001 TYPE ts_t001.
+  READ TABLE gt_t001 INTO ls_t001 WITH KEY bukrs = gs_pa0001-bukrs BINARY SEARCH.
+
+  IF gs_pa0001-bukrs IS INITIAL.
+    gs_scarto-pernr     = p_pernr.
+    gs_scarto-tipo      = 'W'.
+    gs_scarto-messaggio = |Società (BUKRS) mancante in PA0001|.
+    APPEND gs_scarto TO gt_scarti.
+  ELSE.
+    p_anag-societa = gs_pa0001-bukrs.
+  ENDIF.
+
+  IF ls_t001-butxt IS INITIAL.
+    gs_scarto-pernr     = p_pernr.
+    gs_scarto-tipo      = 'W'.
+    gs_scarto-messaggio = |Descrizione società (BUTXT) non trovata per { gs_pa0001-bukrs }|.
+    APPEND gs_scarto TO gt_scarti.
+  ELSE.
+    p_anag-desc_societa = ls_t001-butxt.
+  ENDIF.
+
+  " ---- Werks text --------------------------------------------------
+  DATA: ls_wt TYPE ts_werks_text.
+  READ TABLE gt_werks_text INTO ls_wt WITH KEY werks = gs_pa0001-werks BINARY SEARCH.
+
+  IF ls_wt-name1 IS INITIAL AND gs_pa0001-werks IS NOT INITIAL.
+    gs_scarto-pernr     = p_pernr.
+    gs_scarto-tipo      = 'W'.
+    gs_scarto-messaggio = |Descrizione sede (WERKS { gs_pa0001-werks }) non trovata|.
+    APPEND gs_scarto TO gt_scarti.
+  ELSE.
+    p_anag-desc_amm = ls_wt-name1.
+  ENDIF.
+
+  " ---- Focal Point -------------------------------------------------
+  DATA: ls_fp TYPE ts_fp.
+  READ TABLE gt_fp INTO ls_fp WITH KEY orgeh = gs_pa0001-orgeh BINARY SEARCH.
+
+  IF ls_fp-cod_fp IS INITIAL.
+    gs_scarto-pernr     = p_pernr.
+    gs_scarto-tipo      = 'W'.
+    gs_scarto-messaggio = |Focal Point mancante per unità organizzativa { gs_pa0001-orgeh } in PA0001|.
+    APPEND gs_scarto TO gt_scarti.
+  ELSE.
+    p_anag-cod_fp  = ls_fp-cod_fp.
+    p_anag-desc_fp = ls_fp-desc_fp.
+  ENDIF.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& CARICA ANAGRAFICA
+*& Flag cessato determinato qui tramite gt_cessati / gt_attivi:
+*&   pernr in gt_cessati E NON in gt_attivi -> cessato = true
+*&   altrimenti                             -> cessato = false
+*&---------------------------------------------------------------------*
+FORM carica_anagrafica_old USING    p_pernr   LIKE pa0001-pernr
+                       CHANGING p_anag    TYPE ts_anag.
+
+  CLEAR: p_anag.
+  p_anag-cid = p_pernr.
+
+***  " Determina flag cessato
+***  READ TABLE gt_cessati WITH TABLE KEY pernr = p_pernr
+***       TRANSPORTING NO FIELDS.
+***  IF sy-subrc = 0.
+***    READ TABLE gt_attivi WITH TABLE KEY pernr = p_pernr
+***         TRANSPORTING NO FIELDS.
+***    IF sy-subrc <> 0.
+***      p_anag-cessato = abap_true.   " cessato puro
+***    ELSE.
+***      p_anag-cessato = abap_false.  " anche attivo: prevale attivo
+***    ENDIF.
+***  ELSE.
+***    p_anag-cessato = abap_false.
+***  ENDIF.
+
+  CLEAR gs_pa0002.
+  READ TABLE gt_pa0002 INTO gs_pa0002 WITH KEY pernr = p_pernr BINARY SEARCH.
+  p_anag-codf    = gs_pa0002-perid.
+  p_anag-nome    = gs_pa0002-vorna.
+  p_anag-cognome = gs_pa0002-nachn.
+
+  CLEAR gs_pa0105.
+  READ TABLE gt_pa0105 INTO gs_pa0105 WITH KEY pernr = p_pernr BINARY SEARCH.
+  p_anag-upn = gs_pa0105-zmail.
+
+  CLEAR gs_pa0001.
+  READ TABLE gt_pa0001 INTO gs_pa0001 WITH KEY pernr = p_pernr BINARY SEARCH.
+  p_anag-tipo_dip = gs_pa0001-persk.
+  p_anag-cod_amm  = gs_pa0001-werks.
+
+  DATA: ls_t001 TYPE ts_t001.
+  READ TABLE gt_t001 INTO ls_t001 WITH KEY bukrs = gs_pa0001-bukrs BINARY SEARCH.
+  p_anag-societa      = gs_pa0001-bukrs.
+  p_anag-desc_societa = ls_t001-butxt.
+
+  DATA: ls_wt TYPE ts_werks_text.
+  READ TABLE gt_werks_text INTO ls_wt WITH KEY werks = gs_pa0001-werks BINARY SEARCH.
+  p_anag-desc_amm = ls_wt-name1.
+
+  DATA: ls_fp TYPE ts_fp.
+  READ TABLE gt_fp INTO ls_fp WITH KEY orgeh = gs_pa0001-orgeh BINARY SEARCH.
+  p_anag-cod_fp  = ls_fp-cod_fp.
+  p_anag-desc_fp = ls_fp-desc_fp.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& AGGIORNA PROGRESS BAR
+*&---------------------------------------------------------------------*
+FORM aggiorna_progress_bar USING p_current TYPE i
+                                 p_total   TYPE i
+                                 p_testo   TYPE string.
+
+  DATA: lv_perc  TYPE i,
+        lv_testo TYPE c LENGTH 200.
+
+  CHECK p_total > 0.
+  lv_perc  = ( p_current * 100 ) / p_total.
+  lv_testo = | { p_testo }: { p_current } / { p_total } ({ lv_perc }%)|.
+
+  MESSAGE s398(00) WITH lv_testo.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& WRITE FILE (application server)
+*&---------------------------------------------------------------------*
+FORM write_file USING p_societa  TYPE bukrs
+                      p_pathname TYPE pfeflnamel.
+
+  DATA: lv_out_file TYPE string.
+
+  IF p_societa = 'ALL'.
+    "CONCATENATE p_pathname 'ruo_registry_' p_data '_' sy-uzeit '.TXT'
+    CONCATENATE p_pathname 'ruo_registry_' p_data '_' p_time '.TXT'
+           INTO lv_out_file.
+  ELSE.
+    "CONCATENATE p_pathname 'ruo_registry_' p_data '_' sy-uzeit '_' p_societa '.TXT'
+    CONCATENATE p_pathname 'ruo_registry_' p_data '_' p_time '_' p_societa '.TXT'
+           INTO lv_out_file.
+  ENDIF.
+
+  OPEN DATASET lv_out_file FOR OUTPUT IN TEXT MODE ENCODING UTF-8.
+  IF sy-subrc <> 0.
+    WRITE: / text-e00, sy-subrc, lv_out_file.
+    EXIT.
+  ENDIF.
+
+  LOOP AT gt_tabstring INTO wa_string.
+    TRANSFER wa_string-line TO lv_out_file.
+    IF sy-subrc <> 0.
+      WRITE: / text-e00, sy-subrc, lv_out_file.
+      CLOSE DATASET lv_out_file.
+      EXIT.
+    ENDIF.
+  ENDLOOP.
+
+  CLOSE DATASET lv_out_file.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& BUILD OUTPUT LINE
+*&---------------------------------------------------------------------*
+FORM build_output_line USING ps_anag TYPE ts_anag.
+  CLEAR: wa_string.
+  CONCATENATE
+    ps_anag-codf    ps_anag-cid       ps_anag-nome
+    ps_anag-cognome ps_anag-tipo_dip  ps_anag-upn
+    ps_anag-societa ps_anag-desc_societa
+    ps_anag-cod_amm ps_anag-desc_amm
+    ps_anag-cod_fp  ps_anag-desc_fp
+   INTO wa_string-line RESPECTING BLANKS.
+  APPEND wa_string TO gt_tabstring.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& SCRIVI PARAMETRI SELEZIONE
+*&---------------------------------------------------------------------*
+FORM scrivi_parametri_selezione.
+
+  WRITE: / |============================================================|.
+  WRITE: / |PARAMETRI DI SELEZIONE|.
+  WRITE: / |============================================================|.
+
+  msg = | Data di riferimento : { p_data(4) }-{ p_data+4(2) }-{ p_data+6(2) }|.
+  WRITE: / msg.
+
+  WRITE: /.
+  IF s_bukrs IS INITIAL.
+    WRITE: / | Società             : tutte|.
+  ELSE.
+    WRITE: / | Società             :|.
+    LOOP AT s_bukrs INTO DATA(ls_bk).
+      IF ls_bk-option = 'EQ'.
+        msg = |   { ls_bk-sign } { ls_bk-low }|.
+      ELSE.
+        msg = |   { ls_bk-sign } { ls_bk-low } { ls_bk-option } { ls_bk-high }|.
+      ENDIF.
+      WRITE: / msg.
+    ENDLOOP.
+  ENDIF.
+
+  WRITE: /.
+  WRITE: / | Sorgenti PERNR      :|.
+
+  IF p_atti = abap_true.
+    msg = |   [X] Attivi alla data { p_data(4) }-{ p_data+4(2) }-{ p_data+6(2) }|.
+    WRITE: / msg.
+  ENDIF.
+  IF p_cess = abap_true.
+    msg = |   [X] Cessati dal { p_dtinz(4) }-{ p_dtinz+4(2) }-{ p_dtinz+6(2) }| &
+          | al { p_dtfin(4) }-{ p_dtfin+4(2) }-{ p_dtfin+6(2) }|.
+    WRITE: / msg.
+  ENDIF.
+  IF p_manu = abap_true.
+    msg = |   [X] Selezione manuale: { lines( s_pernr ) } PERNR|.
+    WRITE: / msg.
+  ENDIF.
+  IF p_floc = abap_true.
+    msg = |   [X] File locale PC : { path }|.
+    WRITE: / msg.
+  ENDIF.
+  IF p_fsrv = abap_true.
+    msg = |   [X] File server    : { path_srv }|.
+    WRITE: / msg.
+  ENDIF.
+
+  WRITE: /.
+  WRITE: / | Formato output      :|.
+
+  IF p_uniq = abap_true.
+    msg = |   [X] File unico     : { p_puniq }|.
+    WRITE: / msg.
+  ELSE.
+    IF p_dip = abap_true.
+      msg = |   [X] Dipendenti     : { p_pdip }|.
+      WRITE: / msg.
+      WRITE: / |       Classi dip    :|.
+      LOOP AT s_dip INTO DATA(ls_dip).
+        IF ls_dip-option = 'EQ'.
+          msg = |         { ls_dip-sign } { ls_dip-low }|.
+        ELSE.
+          msg = |         { ls_dip-sign } { ls_dip-low } { ls_dip-option } { ls_dip-high }|.
+        ENDIF.
+        WRITE: / msg.
+      ENDLOOP.
+    ENDIF.
+    IF p_dir = abap_true.
+      msg = |   [X] Dirigenti      : { p_pdir }|.
+      WRITE: / msg.
+      WRITE: / |       Classi dir    :|.
+      LOOP AT s_dir INTO DATA(ls_dir).
+        IF ls_dir-option = 'EQ'.
+          msg = |         { ls_dir-sign } { ls_dir-low }|.
+        ELSE.
+          msg = |         { ls_dir-sign } { ls_dir-low } { ls_dir-option } { ls_dir-high }|.
+        ENDIF.
+        WRITE: / msg.
+      ENDLOOP.
+    ENDIF.
+    IF p_split = abap_true.
+      WRITE: / |   [X] Split per società|.
+    ELSE.
+      WRITE: / |   [ ] Split per società (file unico per tipo)|.
+    ENDIF.
+  ENDIF.
+
+  WRITE: / |============================================================|.
+  WRITE: /.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& SCRIVI SCARTI - ALV con CL_SALV_TABLE (factory)
+*& Funziona sia online (fullscreen interattivo) sia in background
+*& (spool della lista equivalente alla display list ABAP).
+*&---------------------------------------------------------------------*
+FORM scrivi_scarti.
+
+  CHECK gt_scarti IS NOT INITIAL.
+
+  " ---- Prepara una copia tipizzata per la factory ------------------
+  " CL_SALV_TABLE vuole una tabella interna con tipo dichiarato
+  " staticamente, quindi usiamo gt_scarti direttamente.
+
+  DATA: lo_alv     TYPE REF TO cl_salv_table,
+        lo_columns TYPE REF TO cl_salv_columns_table,
+        lo_column  TYPE REF TO cl_salv_column_table,
+        lo_display TYPE REF TO cl_salv_display_settings,
+        lo_funcs   TYPE REF TO cl_salv_functions_list,
+        lx_msg     TYPE REF TO cx_salv_msg,
+        lx_no_col  TYPE REF TO cx_salv_not_found.
+
+  " ---- Factory -----------------------------------------------------
+  TRY.
+      cl_salv_table=>factory(
+        IMPORTING
+          r_salv_table = lo_alv
+        CHANGING
+          t_table      = gt_scarti ).
+
+    CATCH cx_salv_msg INTO lx_msg.
+      WRITE: / |Errore inizializzazione ALV scarti: { lx_msg->get_text( ) }|.
+      RETURN.
+  ENDTRY.
+
+  " ---- Funzioni standard (solo se interattivo) ---------------------
+  IF cl_salv_table=>is_offline( ) = abap_false.
+    lo_funcs = lo_alv->get_functions( ).
+    lo_funcs->set_all( abap_true ).
+  ENDIF.
+
+  " ---- Impostazioni display ----------------------------------------
+  lo_display = lo_alv->get_display_settings( ).
+  lo_display->set_list_header( 'Scarti: Errori bloccanti e Warning' ).
+  lo_display->set_striped_pattern( cl_salv_display_settings=>true ).
+
+  " ---- Colonne: etichette leggibili --------------------------------
+  lo_columns = lo_alv->get_columns( ).
+  lo_columns->set_optimize( abap_true ).
+
+  TRY.
+      " Colonna PERNR
+      lo_column ?= lo_columns->get_column( 'PERNR' ).
+      lo_column->set_short_text( 'PERNR' ).
+      lo_column->set_medium_text( 'CID' ).
+      lo_column->set_long_text(   'Codice Dipendente' ).
+
+      " Colonna BUKRS
+      lo_column ?= lo_columns->get_column( 'BUKRS' ).
+      lo_column->set_short_text( 'Soc.' ).
+      lo_column->set_medium_text( 'Società' ).
+      lo_column->set_long_text(   'Codice Società' ).
+
+      " Colonna TIPO
+      lo_column ?= lo_columns->get_column( 'TIPO' ).
+      lo_column->set_short_text( 'Tipo' ).
+      lo_column->set_medium_text( 'E/W' ).
+      lo_column->set_long_text(   'Errore / Warning' ).
+
+      " Colonna MESSAGGIO
+      lo_column ?= lo_columns->get_column( 'MESSAGGIO' ).
+      lo_column->set_short_text( 'Messaggio' ).
+      lo_column->set_medium_text( 'Segnalazione' ).
+      lo_column->set_long_text(   'Descrizione segnalazione' ).
+
+    CATCH cx_salv_not_found INTO lx_no_col.
+      " colonna non trovata: non critico, proseguiamo
+  ENDTRY.
+
+  " ---- Ordinamento di default: PERNR, poi TIPO (E prima di W) ------
+  TRY.
+      DATA: lo_sorts TYPE REF TO cl_salv_sorts.
+
+      lo_sorts = lo_alv->get_sorts( ).
+      lo_sorts->add_sort( columnname = 'TIPO'  position = 1
+                          sequence   = if_salv_c_sort=>sort_up ).
+      lo_sorts->add_sort( columnname = 'BUKRS' position = 2
+                          sequence   = if_salv_c_sort=>sort_up ).
+      lo_sorts->add_sort( columnname = 'PERNR' position = 3
+                          sequence   = if_salv_c_sort=>sort_up ).
+
+    CATCH cx_salv_not_found
+          cx_salv_existing.
+      " ordinamento non critico
+  ENDTRY.
+
+  " ---- Colorazione righe: rosso per errori, giallo per warning -----
+  " Usiamo un'istanza di cl_salv_columns_table per set_color_column
+  " oppure, più semplicemente, un campo colore nella struttura.
+  " Poiché ts_scarto non ha campo colore, coloriamo via zebra + header.
+  " (Per la colorazione per riga servirebbero modifiche a ts_scarto;
+  "  vedi nota a fine form.)
+
+  " ---- Display -----------------------------------------------------
+  lo_alv->display( ).
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& SCRIVI SCARTI
+*& Stampa il dettaglio di tutti gli scarti (errori e warning)
+*&---------------------------------------------------------------------*
+FORM scrivi_scarti_old.
+
+  CHECK gt_scarti IS NOT INITIAL.
+
+  WRITE: /.
+  WRITE: / |============================================================|.
+  WRITE: / |DETTAGLIO SCARTI (Errori bloccanti e Warning)|.
+  WRITE: / |============================================================|.
+
+  DATA: lv_pernr_prec TYPE persno,
+        lv_tipo       TYPE c LENGTH 1,
+        lv_label      TYPE string.
+
+  SORT gt_scarti BY pernr tipo messaggio.
+
+  LOOP AT gt_scarti INTO gs_scarto.
+    lv_tipo  = gs_scarto-tipo.
+    lv_label = COND #( WHEN lv_tipo = 'E' THEN '[ERRORE ] '
+                                           ELSE '[WARNING] ' ).
+    IF gs_scarto-pernr <> lv_pernr_prec.
+      WRITE: /.
+      msg = | PERNR { gs_scarto-pernr }:|.
+      WRITE: / msg.
+      lv_pernr_prec = gs_scarto-pernr.
+    ENDIF.
+    msg = |   { lv_label }{ gs_scarto-messaggio }|.
+    WRITE: / msg.
+  ENDLOOP.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& INVIA MAIL
+*& Corpo : riepilogo numerico elaborazione
+*& Allegato: scarti in formato CSV (separatore ;)
+*& Usa CL_BCS (Business Communication Services).
+*&---------------------------------------------------------------------*
+FORM invia_mail USING pv_cnt_adde TYPE i
+                      pv_cnt_err  TYPE i
+                      pv_cnt_wrn  TYPE i
+                      pv_cnt_cf_dupl  TYPE i.
+
+  DATA: lo_send_req  TYPE REF TO cl_bcs,
+        lo_document  TYPE REF TO cl_document_bcs,
+        lo_recipient TYPE REF TO if_recipient_bcs,
+        lo_sender    TYPE REF TO cl_sapuser_bcs,
+        lv_subject   TYPE so_obj_des,
+        lt_body      TYPE soli_tab,
+        lw_body      TYPE soli,
+        lv_address   TYPE ad_smtpadr,
+        lx_bcs       TYPE REF TO cx_bcs.
+
+  CHECK p_mail = abap_true.
+
+  TRY.
+
+      " ---- Crea la richiesta di invio ------------------------------
+      lo_send_req = cl_bcs=>create_persistent( ).
+
+      " ---- Mittente: utente SAP corrente ---------------------------
+      lo_sender = cl_sapuser_bcs=>create( sy-uname ).
+      lo_send_req->set_sender( lo_sender ).
+
+      " ==============================================================
+      " CORPO MAIL - solo riepilogo numerico
+      " ==============================================================
+      lw_body-line = ''.
+      APPEND lw_body TO lt_body.
+      lw_body-line = 'Elaborazione Anagrafiche Totali PWS - Riepilogo'.
+      APPEND lw_body TO lt_body.
+      lw_body-line = repeat( val = '=' occ = 50 ).
+      APPEND lw_body TO lt_body.
+      lw_body-line = ''.
+      APPEND lw_body TO lt_body.
+
+      lw_body-line = |Data e ora  di riferimento : { p_data(4) }-{ p_data+4(2) }-{ p_data+6(2) }, { p_time(2) }:{ p_time+2(2) }:{ p_time+4(2) } |.
+      APPEND lw_body TO lt_body.
+      lw_body-line = ''.
+      APPEND lw_body TO lt_body.
+
+      lw_body-line = repeat( val = '-' occ = 50 ).
+      APPEND lw_body TO lt_body.
+      lw_body-line = |CID totali in input                : { lines( s_pernr )  }|.
+      APPEND lw_body TO lt_body.
+      lw_body-line = |CID con errori bloccanti (rimossi): { pv_cnt_err }|.
+      APPEND lw_body TO lt_body.
+      lw_body-line = |CID rimossi per CF duplicato       : { pv_cnt_cf_dupl }|.
+      APPEND lw_body TO lt_body.
+      lw_body-line = |CID scritti sui file               : { lines( gt_anag )  }|.
+      APPEND lw_body TO lt_body.
+      lw_body-line = ''.
+      APPEND lw_body TO lt_body.
+      lw_body-line = |CID con soli warning (mantenute)   : { pv_cnt_wrn }|.
+      APPEND lw_body TO lt_body.
+      lw_body-line = ''.
+      lw_body-line = repeat( val = '-' occ = 50 ).
+      APPEND lw_body TO lt_body.
+      lw_body-line = ''.
+      APPEND lw_body TO lt_body.
+      lw_body-line = 'Vedere il file CSV allegato per il dettaglio degli scarti (errori e warning).'.
+      APPEND lw_body TO lt_body.
+      lw_body-line = ''.
+      APPEND lw_body TO lt_body.
+      lw_body-line = repeat( val = '=' occ = 50 ).
+      APPEND lw_body TO lt_body.
+      lw_body-line = |Messaggio generato automaticamente da { sy-repid }|.
+      APPEND lw_body TO lt_body.
+      lw_body-line = |Utente: { sy-uname }  -  Sistema: { sy-sysid }|.
+      APPEND lw_body TO lt_body.
+
+      " ---- Oggetto ------------------------------------------------
+      lv_subject = |PWS Anagrafiche { p_data(4) }-{ p_data+4(2) }-{ p_data+6(2) }| & | - OK: { pv_cnt_adde } - ERR: { pv_cnt_err } - WARN: { pv_cnt_wrn }|.
+
+      " ---- Crea documento corpo -----------------------------------
+      lo_document = cl_document_bcs=>create_document(
+        i_type    = 'RAW'
+        i_text    = lt_body
+        i_subject = lv_subject ).
+
+      " ==============================================================
+      " ALLEGATO CSV - una riga per segnalazione
+      " Intestazione + righe dati; separatore ;
+      " Colonne: PERNR;Tipo;Messaggio
+      " ==============================================================
+      IF gt_scarti IS NOT INITIAL.
+
+        DATA: lt_csv      TYPE soli_tab,
+              lw_csv      TYPE soli,
+              lv_tipo_tx  TYPE string,
+              lv_msg_esc  TYPE string,
+              lv_csv_full TYPE string,       " stringa unica con CRLF
+              lt_csv_bin  TYPE solix_tab,    " contenuto binario per allegato
+              lv_crlf     TYPE string.
+
+        lv_crlf = cl_abap_char_utilities=>cr_lf.
+
+        " Intestazione CSV
+        lv_csv_full = |PERNR;Societa';Tipo;Messaggio{ lv_crlf }|.
+
+        SORT gt_scarti BY tipo ASCENDING pernr ASCENDING bukrs ASCENDING messaggio ASCENDING.
+
+        DATA: lv_pernr_prec_csv TYPE persno,
+              lv_csv_pernr_err  TYPE i VALUE 0,
+              lv_csv_pernr_wrn  TYPE i VALUE 0,
+              lv_csv_ha_err     TYPE abap_bool VALUE abap_false,
+              lv_csv_ha_wrn     TYPE abap_bool VALUE abap_false.
+
+        LOOP AT gt_scarti INTO gs_scarto.
+
+***          " Cambio PERNR: consolida contatori del precedente
+***          IF gs_scarto-pernr <> lv_pernr_prec_csv AND lv_pernr_prec_csv IS NOT INITIAL.
+***            IF lv_csv_ha_err = abap_true. ADD 1 TO lv_csv_pernr_err. ENDIF.
+***            IF lv_csv_ha_wrn = abap_true AND lv_csv_ha_err = abap_false.
+***              ADD 1 TO lv_csv_pernr_wrn.
+***            ENDIF.
+***            CLEAR: lv_csv_ha_err, lv_csv_ha_wrn.
+***          ENDIF.
+***
+***          lv_pernr_prec_csv = gs_scarto-pernr.
+***          IF gs_scarto-tipo = 'E'. lv_csv_ha_err = abap_true. ENDIF.
+***          IF gs_scarto-tipo = 'W'. lv_csv_ha_wrn = abap_true. ENDIF.
+
+          " Escape messaggio
+          lv_msg_esc = gs_scarto-messaggio.
+          REPLACE ALL OCCURRENCES OF '"' IN lv_msg_esc WITH '""'.
+          IF lv_msg_esc CS ';' OR lv_msg_esc CS '"'.
+            lv_msg_esc = |"{ lv_msg_esc }"|.
+          ENDIF.
+
+***          lv_tipo_tx = COND #( WHEN gs_scarto-tipo = 'E'
+***                                    THEN 'Errore bloccante'
+***                                    ELSE 'Warning' ).
+
+          " Aggiunge riga con CRLF in coda
+          lv_csv_full = lv_csv_full &&
+                        |{ gs_scarto-pernr };{ gs_scarto-bukrs };{ gs_scarto-tipo };{ lv_msg_esc }{ lv_crlf }|.
+
+        ENDLOOP.
+
+***        " Consolida ultimo PERNR
+***        IF lv_pernr_prec_csv IS NOT INITIAL.
+***          IF lv_csv_ha_err = abap_true. ADD 1 TO lv_csv_pernr_err. ENDIF.
+***          IF lv_csv_ha_wrn = abap_true AND lv_csv_ha_err = abap_false.
+***            ADD 1 TO lv_csv_pernr_wrn.
+***          ENDIF.
+***        ENDIF.
+
+***        " Righe di riepilogo in fondo
+***        lv_csv_full = lv_csv_full && |{ lv_crlf }|.
+***        lv_csv_full = lv_csv_full && |;;Riepilogo PERNR;{ lv_crlf }|.
+***        lv_csv_full = lv_csv_full && |;;PERNR estratti totali;{ pv_cnt_ok + pv_cnt_err }{ lv_crlf }|.
+***        lv_csv_full = lv_csv_full && |;;PERNR con errori bloccanti (scartati);{ lv_csv_pernr_err }{ lv_crlf }|.
+***        lv_csv_full = lv_csv_full && |;;PERNR con soli warning (mantenuti);{ lv_csv_pernr_wrn }{ lv_crlf }|.
+***        lv_csv_full = lv_csv_full && |;;PERNR usati per produrre i file;{ pv_cnt_ok }{ lv_crlf }|.
+***        lv_csv_full = lv_csv_full && |;;Segnalazioni totali (righe dati);{ lines( gt_scarti ) }{ lv_crlf }|.
+
+        " Converti stringa in xstring -> solix_tab per allegato binario
+        DATA: lv_csv_xstring TYPE xstring.
+***        DATA: lit_binary_content  TYPE solix_tab.
+
+        CALL FUNCTION 'SCMS_STRING_TO_XSTRING'
+          EXPORTING
+            text     = lv_csv_full
+            mimetype = 'text/csv'
+***            encoding = 'UTF-8'
+          IMPORTING
+            buffer   = lv_csv_xstring
+          EXCEPTIONS
+            failed   = 1
+            OTHERS   = 2.
+
+        IF sy-subrc = 0.
+          CALL FUNCTION 'SCMS_XSTRING_TO_BINARY'
+            EXPORTING
+              buffer          = lv_csv_xstring
+              append_to_table = 'X' "Do not clear/refresh table
+            TABLES
+              binary_tab      = lt_csv_bin.
+        ENDIF.
+
+        " Nome file allegato
+        DATA lv_filename TYPE sood-objdes.
+        lv_filename = |scarti_pws_{ p_data(4) }{ p_data+4(2) }{ p_data+6(2) }.csv|.
+
+        " Allegato come contenuto binario (solix) - preserva CRLF
+        lo_document->add_attachment(
+          i_attachment_type    = 'CSV'
+          i_attachment_subject = lv_filename
+          i_att_content_hex    = lt_csv_bin ).
+
+      ENDIF.
+
+      " ---- Aggiunge documento alla richiesta ----------------------
+      lo_send_req->set_document( lo_document ).
+
+      " ---- Mittente ------------------------------------------
+      TRY.
+          lo_sender = cl_sapuser_bcs=>create( 'RUO-SOP' ). "sender is the logged in user
+          lo_send_req->set_sender(
+          EXPORTING
+          i_sender = lo_sender ).
+*    CATCH CX_ADDRESS_BCS.
+****Catch exception here
+      ENDTRY.
+
+
+      " ---- Destinatari A ------------------------------------------
+      LOOP AT s_rcpta INTO DATA(ls_a).
+        CHECK ls_a-low IS NOT INITIAL.
+        lv_address = ls_a-low.
+        lo_recipient = cl_cam_address_bcs=>create_internet_address( lv_address ).
+        lo_send_req->add_recipient(
+          i_recipient = lo_recipient
+          i_express   = abap_true ).
+      ENDLOOP.
+
+      " ---- Destinatari CC -----------------------------------------
+      LOOP AT s_rcptcc INTO DATA(ls_cc).
+        CHECK ls_cc-low IS NOT INITIAL.
+        lv_address = ls_cc-low.
+        lo_recipient = cl_cam_address_bcs=>create_internet_address( lv_address ).
+        lo_send_req->add_recipient(
+          i_recipient  = lo_recipient
+          i_copy       = abap_true
+          i_express    = abap_true ).
+      ENDLOOP.
+
+      " ---- Invio --------------------------------------------------
+      lo_send_req->send( i_with_error_screen = abap_false ).
+      COMMIT WORK.
+
+      WRITE: / |Mail inviata a { lines( s_rcpta ) } destinatari A| &
+               | e { lines( s_rcptcc ) } CC.|.
+      IF gt_scarti IS NOT INITIAL.
+        WRITE: / |Allegato: { lv_filename }|. " ({ lines( gt_scarti ) } righe).|.
+      ENDIF.
+
+    CATCH cx_bcs INTO lx_bcs.
+      WRITE: / |Errore invio mail: { lx_bcs->get_text( ) }|.
+
+  ENDTRY.
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*&      Form  CARICA_CID_PER_SOCIETA
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM carica_cid_per_societa .
+
+  SELECT pernr FROM pa0001 INTO TABLE @DATA(gt_pernr_by_soc)
+   WHERE bukrs IN @s_bukrs
+     AND endda = '99991231'.
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*&      Form  GET_PERNR_ATTIVI_V2
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->P_GT_INPUT  text
+*----------------------------------------------------------------------*
+FORM get_pernr_attivi_v2.
+
+  DATA: lt_raw      TYPE STANDARD TABLE OF ts_input WITH EMPTY KEY,
+        ls_raw      TYPE ts_input,
+        ls_existing TYPE ts_input.
+
+  " 1) Attivi alla data p_data
+  SELECT p0000~pernr, p0000~begda, p0000~endda FROM pa0001 AS p0001
+    INNER JOIN pa0000 AS p0000
+      ON p0000~pernr = p0001~pernr
+    WHERE p0001~bukrs IN @s_bukrs
+      AND p0001~begda <= @p_data
+      AND p0001~endda >= @p_data
+      AND p0000~begda <= @p_data
+      AND p0000~endda >= @p_data
+      AND p0000~stat2 = '3'
+    INTO TABLE @lt_raw.
+
+  " 2) 1 riga per PERNR: tengo BEGDA più recente
+  LOOP AT lt_raw INTO ls_raw.
+    READ TABLE gt_attivi WITH TABLE KEY pernr = ls_raw-pernr INTO ls_existing.
+
+    IF sy-subrc <> 0.
+      INSERT VALUE ts_input( pernr = ls_raw-pernr
+                             begda = ls_raw-begda
+                             endda = ls_raw-endda ) INTO TABLE gt_attivi.
+    ELSEIF ls_raw-begda > ls_existing-begda.
+      ls_existing-begda = ls_raw-begda.
+      ls_existing-endda = ls_raw-endda.
+      MODIFY TABLE gt_attivi FROM ls_existing.
+    ENDIF.
+  ENDLOOP.
+
+  " 3) Output finale
+  gt_attivi = CORRESPONDING #( gt_attivi ).
+ENDFORM.
+
+FORM get_pernr_cessati_v2.
+
+  DATA: lt_raw      TYPE STANDARD TABLE OF ts_input WITH EMPTY KEY,
+        ls_raw      TYPE ts_input,
+        ls_existing TYPE ts_input.
+
+  " 1) Selezione coerente su PA0000 per PERNR/BEGDA/ENDDA
+  SELECT p0000~pernr, p0000~begda, p0000~endda FROM pa0000 AS p0000
+    INNER JOIN pa0001 AS p0001
+      ON p0001~pernr = p0000~pernr
+    WHERE p0000~begda >= @p_dtinz
+      AND p0000~begda >= @p_dtfin
+      AND p0000~stat2 <> '3'
+      AND p0001~bukrs IN @s_bukrs
+    INTO TABLE @lt_raw.
+
+  " 2) Una sola riga per PERNR: tengo quella con BEGDA più recente
+  LOOP AT lt_raw INTO ls_raw.
+    READ TABLE gt_cessati WITH TABLE KEY pernr = ls_raw-pernr INTO ls_existing.
+
+    IF sy-subrc <> 0.
+      INSERT VALUE ts_input( pernr = ls_raw-pernr
+                             begda = ls_raw-begda
+                             endda = ls_raw-endda ) INTO TABLE gt_cessati.
+    ELSEIF ls_raw-begda > ls_existing-begda.
+      ls_existing-begda = ls_raw-begda.
+      ls_existing-endda = ls_raw-endda.
+      MODIFY TABLE gt_cessati FROM ls_existing.
+    ENDIF.
+  ENDLOOP.
+
+  " 3) Output finale (standard table)
+  gt_cessati_2 = CORRESPONDING #( gt_cessati ).
+
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*&      Form  CHECK_CESSATI
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM check_cessati .
+
+  FIELD-SYMBOLS: <fs_cessato> TYPE ts_input.
+
+  LOOP AT gt_cessati ASSIGNING <fs_cessato>.
+    IF line_exists( gt_attivi[ pernr = <fs_cessato>-pernr ] ).
+      DELETE TABLE gt_cessati FROM <fs_cessato>.
+    ENDIF.
+  ENDLOOP.
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*&      Form  AGGIUNGI_ATTIVI_E_CESSATI
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM aggiungi_attivi_e_cessati TABLES gt_inp STRUCTURE wa_input.
+
+  LOOP AT gt_attivi INTO DATA(wa).
+    APPEND VALUE ts_input( pernr = wa-pernr ) TO gt_inp.
+  ENDLOOP.
+
+  LOOP AT gt_cessati INTO wa.
+    APPEND VALUE ts_input( pernr = wa-pernr ) TO gt_inp.
+  ENDLOOP.
+
+ENDFORM.
+
+FORM calcola_date_cessati.
+  DATA: lv_datum_prec TYPE dats.
+  " ----- Calcolo primo e ultimo giorno dei mese precedenti per i cessati -----------
+  lv_datum_prec       = sy-datum.
+  lv_datum_prec+6(02) = '01'.
+  lv_datum_prec       = lv_datum_prec - 1.
+
+  p_dtfin = lv_datum_prec.
+  DATA mesi LIKE p_mesi.
+  mesi = p_mesi - 1.
+  CALL FUNCTION 'RP_CALC_DATE_IN_INTERVAL'
+    EXPORTING
+      date      = p_dtfin
+      days      = 0
+      months    = mesi
+      years     = 0
+      signum    = '-'
+    IMPORTING
+      calc_date = lv_datum_prec.
+
+  lv_datum_prec+6(2) = '01'.
+  p_dtinz = lv_datum_prec.
+ENDFORM.
+
+FORM get_data_0001 TABLES   gt_inp STRUCTURE wa_input.
+
+  DATA: lt_pa0001_raw    TYPE STANDARD TABLE OF ts_input,
+        lt_pa0001_latest TYPE HASHED TABLE OF   ts_input WITH UNIQUE KEY pernr,
+        ls_pa0001        TYPE ts_input.
+
+  FIELD-SYMBOLS: <fs_inp> TYPE ts_input.
+
+  IF gt_inp[] IS NOT INITIAL.
+
+    SELECT pernr begda endda persg FROM pa0001 INTO TABLE lt_pa0001_raw
+      FOR ALL ENTRIES IN gt_inp
+      WHERE pernr = gt_inp-pernr.
+
+    IF sy-subrc = 0 AND lt_pa0001_raw IS NOT INITIAL.
+      SORT lt_pa0001_raw BY pernr begda DESCENDING endda DESCENDING.
+      LOOP AT lt_pa0001_raw INTO ls_pa0001.
+        " Inserisco solo il primo record per PERNR,
+        " che dopo il sort è quello più recente
+        INSERT ls_pa0001 INTO TABLE lt_pa0001_latest.
+        IF sy-subrc <> 0.
+          CONTINUE.
+        ENDIF.
+      ENDLOOP.
+
+      LOOP AT gt_inp ASSIGNING <fs_inp>.
+        READ TABLE lt_pa0001_latest INTO ls_pa0001 WITH TABLE KEY pernr = <fs_inp>-pernr.
+        IF sy-subrc = 0.
+          <fs_inp>-begda = ls_pa0001-begda.
+          <fs_inp>-endda = ls_pa0001-endda.
+          <fs_inp>-persg = ls_pa0001-persg.
+        ENDIF.
+      ENDLOOP.
+
+    ENDIF.
+
+  ENDIF.
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*&      Form  DEDUPLICA_CF
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->P_GT_ANAG  text
+*----------------------------------------------------------------------*
+FORM deduplica_cf  TABLES  p_gt_anag STRUCTURE gw_anag.
+
+  FIELD-SYMBOLS: <fs_anag> TYPE ts_anag.
+
+***  LOOP AT gt_anag ASSIGNING <fs_anag>.
+***    IF <fs_anag>-persg = '04'.
+***      <fs_anag>-cessato = abap_true.
+***    ELSE.
+***      <fs_anag>-cessato = abap_false.
+***    ENDIF.
+***  ENDLOOP.
+
+  " 2) Ordino mettendo prima:
+  "    - CODF
+  "    - BEGDA decrescente
+  "    - PERSG attivo '01' prima di cessato '04'
+  SORT gt_anag BY codf
+                  begda DESCENDING
+                  persg ASCENDING.
+*                  cid DESCENDING.
+
+  " 3) Elimino i duplicati sul solo CF
+  DELETE ADJACENT DUPLICATES FROM gt_anag COMPARING codf.
+
+ENDFORM.

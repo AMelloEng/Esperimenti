@@ -1,0 +1,499 @@
+REPORT zhr_bp_anag_pws.
+*&---------------------------------------------------------------------*
+*& Report  ZHP_BP_ANAG_PWS
+*&
+*& Autore: A. Mello - 16/06/2026 - ENGINEERING
+*&
+*&---------------------------------------------------------------------*
+*& Estrazione anagrafiche per integrazione buoni pasto con PWS
+*& CID interessati: tutti gli attivi alla data di produzione e/o i
+*&  cessati con data fine nel range indicato.
+*&  Fonti PERNR: file locale PC, file server ABAP, attivi, cessati,
+*&  oppure select-option manuale.
+*& 07/07/2026: introdotta la possibilità di fare una copia di backup
+*&---------------------------------------------------------------------*
+
+INCLUDE zhr_bp_anag_pws_t.
+INCLUDE zhr_bp_anag_pws_s.
+INCLUDE zhr_bp_anag_pws_f.
+
+INITIALIZATION.
+  PERFORM calcola_date_cessati.
+  PERFORM imposta_input.
+
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR path.
+  PERFORM match_code_path CHANGING path.
+
+AT SELECTION-SCREEN OUTPUT.
+  PERFORM gestisci_screen.
+
+AT SELECTION-SCREEN.
+  PERFORM controlla_input.
+  PERFORM calcola_date_cessati.
+
+***AT SELECTION-SCREEN ON p_mesi.
+***  PERFORM calcola_date_cessati.
+
+
+START-OF-SELECTION.
+
+  PERFORM scrivi_parametri_selezione.
+***  PERFORM carica_cid_per_societa.
+
+  " ============================================================
+  " 1. Raccolta PERNR da tutte le sorgenti attive
+  " ============================================================
+
+  WRITE: /.
+  WRITE: / |- Inizio lettura CID da sorgenti dati ...|.
+
+  CLEAR: gt_input, gt_attivi, gt_cessati.
+
+  IF p_floc = abap_true AND path IS NOT INITIAL.
+    PERFORM get_cid_from_csv TABLES gt_input USING path. "appende in gt_input
+    DATA(letti_csv_pc) = lines( gt_input ).
+*    WRITE: /.
+    WRITE: / | - CID leti da CSV locale { letti_csv_pc }|.
+  ENDIF.
+
+  IF p_fsrv = abap_true AND path_srv IS NOT INITIAL.
+    PERFORM get_cid_from_csv_server TABLES gt_input USING path_srv. "appende in gt_input
+    DATA(letti_csv_srv) = lines( gt_input ) - letti_csv_pc.
+*    WRITE: /.
+    WRITE: / | - CID leti da CSV u server { letti_csv_srv }|.
+  ENDIF.
+
+  IF p_manu = abap_true AND s_pernr IS NOT INITIAL. "appende in gt_input
+    LOOP AT s_pernr INTO DATA(ls_man).
+      APPEND VALUE ts_input( pernr = ls_man-low ) TO gt_input.
+    ENDLOOP.
+    msg = | - CID letti da selezione manuale: { lines( s_pernr ) }|.
+    WRITE: / msg.
+  ENDIF.
+
+  "se ho ricevuto degli input (file locale, file srv, select-option) ho solo elenco di cid.
+  "aggiungo le info dell'IT0001 (begda, persg, ...)
+  PERFORM get_data_0001 TABLES gt_input.
+
+  WRITE: /.
+  WRITE: / | - Inizio estrazione attivi e cessati ...|.
+
+  IF p_atti = abap_true.
+    "PERFORM get_pernr_attivi TABLES gt_input. "appende in gt_input
+    "PERFORM get_pernr_attivi_v2. "restituisce una hashed table gt_attivi
+    PERFORM get_pernr_attivi. "restituisce una hashed table gt_attivi
+    WRITE: / | - CID attivi: { lines( gt_attivi ) }|.
+  ENDIF.
+
+  IF p_cess = abap_true.
+    "PERFORM get_pernr_cessati TABLES gt_input. "appende in gt_input
+    "PERFORM get_pernr_cessati_v2. "restituisce una hashed table gt_attivi
+    PERFORM get_pernr_cessati. ""restituisce una hashed table gt_attivi
+    WRITE: / | - CID cessati da pulire: { lines( gt_cessati ) }|.
+    PERFORM check_cessati. "elimino i cessati presenti tra gli attivi
+    WRITE: / | - CID cessati puliti: { lines( gt_cessati ) }|.
+  ENDIF.
+
+  PERFORM aggiungi_attivi_e_cessati TABLES gt_input.
+
+  " Deduplicazione PERNR (semplice, senza flag)
+  SORT gt_input BY pernr DESCENDING begda DESCENDING.
+  DELETE ADJACENT DUPLICATES FROM gt_input COMPARING pernr.
+
+  " Merge in s_pernr
+  CLEAR: s_pernr[].
+  LOOP AT gt_input INTO wa_input.
+    s_pernr-sign   = 'I'.
+    s_pernr-option = 'EQ'.
+    s_pernr-low    = wa_input-pernr.
+    APPEND s_pernr.
+  ENDLOOP.
+
+  " ============================================================
+  " 2. Controllo e caricamento dati
+  " ============================================================
+  IF lines( s_pernr ) = 0.
+    WRITE: / 'Nessun CID in selezione, elaborazione interrotta'.
+    RETURN.
+  ENDIF.
+
+  msg = | - CID selezionati puliti  e senza duplicati : { lines( s_pernr ) }|.
+  WRITE: / msg.
+
+  PERFORM carica_dati_per_anagrafica.       "usa S_PERNR
+
+  PERFORM escludi_per_persk. "toglie da S_PERNR
+  msg = | - CID dopo filtro PERSK (s_dip / s_dir): { lines( s_pernr ) }|.
+  WRITE: / msg.
+
+  " ============================================================
+  " 3. Composizione anagrafiche con progress bar
+  " ============================================================
+  DATA: "lt_anag      LIKE tt_anag,
+    "lt_anag_dip  LIKE tt_anag,
+    "lt_anag_dir  LIKE tt_anag,
+    lv_idx         TYPE i VALUE 0,
+    lv_total       TYPE i,
+    lv_err_blk     TYPE abap_bool,
+    lv_war_noblk   TYPE abap_bool,
+    lv_cnt_ok      TYPE i VALUE 0,
+    lv_cnt_added   TYPE i VALUE 0,
+    lv_cnt_err     TYPE i VALUE 0,
+    lv_cnt_wrn     TYPE i VALUE 0,
+    lv_cnt_clean   TYPE i VALUE 0,
+    lv_cnt_cf_dupl TYPE i VALUE 0.
+
+  WRITE: /.
+  WRITE: / | - Inizio composizione anagrafiche ...|.
+
+  lv_total = lines( s_pernr ).
+  CLEAR: gt_anag, gt_anag[].
+  CLEAR:  lv_cnt_clean, lv_cnt_err, lv_cnt_wrn, lv_cnt_ok, lv_cnt_added, lv_cnt_cf_dupl.
+  LOOP AT s_pernr INTO DATA(ls_pernr).
+    ADD 1 TO lv_idx.
+
+    IF lv_idx MOD 100 = 0 OR lv_idx = lv_total.
+      PERFORM aggiorna_progress_bar USING lv_idx lv_total 'Caricamento anagrafiche'.
+    ENDIF.
+
+    " ---- Memorizza il numero di scarti prima della chiamata ----------
+*    DATA(lv_scarti_before) = lines( gt_scarti ).
+
+    PERFORM carica_anagrafica USING    ls_pernr-low
+                              CHANGING gw_anag
+                                       lv_err_blk
+                                       lv_war_noblk.
+
+    " ---- Aggiornamento contatori scarti per PERNR -------------------
+    IF lv_err_blk = abap_true.
+      ADD 1 TO lv_cnt_err.
+    ENDIF.
+
+    IF lv_war_noblk = abap_true.
+      ADD 1 TO lv_cnt_wrn.
+    ENDIF.
+
+    " ---- contatore CID puliti senza err e war -----------------
+    IF lv_err_blk = abap_false AND lv_war_noblk = abap_false.
+      ADD 1 TO lv_cnt_clean.
+    ENDIF.
+
+    " ---- Inserisci in GT_ANAG solo se non bloccante -----------------
+    IF lv_err_blk = abap_false.
+      APPEND gw_anag TO gt_anag.
+      IF sy-subrc <> 0.
+        WRITE: / | - ERRORE in 'APPEND gw_anag TO gt_anag.' : { sy-subrc  }|.
+      ENDIF.
+      ADD 1 TO lv_cnt_added.
+    ENDIF.
+
+    CLEAR: gw_anag, ls_pernr, lv_err_blk, lv_war_noblk.
+  ENDLOOP.
+
+  WRITE: / | - CID iniziali : { lines( s_pernr )  }|.
+  WRITE: /.
+
+  SORT gt_scarti BY tipo ASCENDING pernr ASCENDING bukrs ASCENDING messaggio ASCENDING.
+
+  WRITE: /.
+  msg = | - CID con errori bloccanti; quindi esclusi : { lv_cnt_err }|.
+  WRITE: / msg.
+  msg = | - CID con warninig       ; quindi compresi : { lv_cnt_wrn }|.
+  WRITE: / msg.
+  msg = | - CID considerati per output finale        : { lv_cnt_added }|.
+  WRITE: / msg.
+  msg = | - CID dopo esclusione in errore            : { lines( gt_anag ) }|.
+  WRITE: / msg.
+
+  "ora devo solo eliminare eventuali CF duplicati mantenendo solo quello riferito alla dats più recente
+***  SORT gt_anag BY codf begda DESCENDING.
+***  DELETE ADJACENT DUPLICATES FROM gt_anag COMPARING codf.
+  PERFORM deduplica_cf TABLES gt_anag.
+
+  WRITE: /.
+  lv_cnt_cf_dupl = lv_cnt_added - lines( gt_anag ).
+  WRITE: | - CF duplicati rimossi             : { lv_cnt_added - lines( gt_anag ) } |.
+  WRITE: | - CID rimaneti per file anagrafico : { lines( gt_anag ) } |.
+
+
+  " Suddivisione dipendenti / dirigenti
+  SORT gt_anag BY societa ASCENDING cid ASCENDING.
+  CLEAR: gt_anag_dir, gt_anag_dip.
+  LOOP AT gt_anag ASSIGNING FIELD-SYMBOL(<ls_anag>).
+
+    IF <ls_anag>-tipo_dip IN s_dir.
+      APPEND <ls_anag> TO gt_anag_dir.
+
+    ELSEIF <ls_anag>-tipo_dip IN s_dip.
+      APPEND <ls_anag> TO gt_anag_dip.
+    ENDIF.
+  ENDLOOP.
+
+  DATA: lv_societa  TYPE ts_anag-societa,
+        lv_cess_soc TYPE i.
+
+  " ============================================================
+  " 4. Output DIPENDENTI (file separati)
+  " ============================================================
+  IF p_dip = abap_true AND lines( gt_anag_dip ) > 0.
+    WRITE: /.
+    WRITE: / |___________________|.
+    msg = |Anagrafica DIPENDENTI ({ lines( gt_anag_dip ) })|.
+    WRITE: / msg.
+
+    IF p_split = abap_true.
+      WRITE: / |Split per società attivo|.
+      CLEAR: gt_tabstring, lv_societa, lv_cess_soc.
+
+      SORT gt_anag_dip BY societa ASCENDING cid ASCENDING.
+      LOOP AT gt_anag_dip INTO gw_anag.
+        IF lv_societa IS NOT INITIAL AND lv_societa <> gw_anag-societa. "al primo giro index=1 salta / poi gestisce il cambio società e file
+          PERFORM write_file USING lv_societa p_pdip.
+          IF p_dipbck = abap_true.
+            PERFORM write_file USING lv_societa p_pdipbk.
+          ENDIF.
+          msg = | - { lv_societa } : { lines( gt_tabstring ) } (cessati: { lv_cess_soc })|.
+          WRITE: / msg.
+          CLEAR: gt_tabstring, lv_cess_soc.
+        ENDIF.
+        lv_societa = gw_anag-societa.
+        "IF gw_anag-cessato = abap_true.
+        IF gw_anag-persg = '4'.
+          ADD 1 TO lv_cess_soc.
+        ENDIF.
+        PERFORM build_output_line USING gw_anag.
+      ENDLOOP.
+      IF gt_tabstring IS NOT INITIAL.
+        PERFORM write_file USING lv_societa p_pdip.
+        IF p_dipbck = abap_true.
+          PERFORM write_file USING lv_societa p_pdipbk.
+        ENDIF.
+        msg = | - { lv_societa } : { lines( gt_tabstring ) } (cessati: { lv_cess_soc })|.
+        WRITE: / msg.
+      ENDIF.
+
+    ELSE.
+      WRITE: / |Split per società NON attivo|.
+      CLEAR: gt_tabstring, lv_cess_soc.
+      SORT gt_anag_dip BY societa ASCENDING cid ASCENDING.
+      LOOP AT gt_anag_dip INTO gw_anag.
+        IF gw_anag-persg = '4'.
+          ADD 1 TO lv_cess_soc.
+        ENDIF.
+        PERFORM build_output_line USING gw_anag.
+      ENDLOOP.
+      PERFORM write_file USING 'ALL' p_pdip.
+      IF p_dipbck = abap_true.
+        PERFORM write_file USING 'ALL' p_pdipbk.
+      ENDIF.
+      msg = | - tutte le società: { lines( gt_tabstring ) } (cessati: { lv_cess_soc })|.
+      WRITE: / msg.
+    ENDIF.
+
+  ENDIF.
+
+  " ============================================================
+  " 5. Output DIRIGENTI (file separati)
+  " ============================================================
+  IF p_dir = abap_true AND lines( gt_anag_dir ) > 0.
+    WRITE: /.
+    WRITE: / |___________________|.
+    msg = |Anagrafica DIRIGENTI ({ lines( gt_anag_dir ) })|.
+    WRITE: / msg.
+
+    IF p_split = abap_true.
+      WRITE: / |Split per società attivo|.
+      CLEAR: gt_tabstring, lv_societa, lv_cess_soc.
+
+      SORT gt_anag_dir BY societa ASCENDING cid ASCENDING.
+      LOOP AT gt_anag_dir INTO gw_anag.
+        IF lv_societa IS NOT INITIAL AND lv_societa <> gw_anag-societa. "al primo giro index=1 salta / poi gestisce il cambio società e file
+          PERFORM write_file USING lv_societa p_pdir.
+          IF p_dirbck = abap_true.
+            PERFORM write_file USING lv_societa p_pdirbk.
+          ENDIF.
+          msg = | - { lv_societa } : { lines( gt_tabstring ) } (cessati: { lv_cess_soc })|.
+          WRITE: / msg.
+          CLEAR: gt_tabstring, lv_cess_soc.
+        ENDIF.
+        lv_societa = gw_anag-societa.
+        IF gw_anag-persg = '4'.
+          ADD 1 TO lv_cess_soc.
+        ENDIF.
+        PERFORM build_output_line USING gw_anag.
+      ENDLOOP.
+      IF gt_tabstring IS NOT INITIAL.
+        PERFORM write_file USING lv_societa p_pdir.
+        IF p_dirbck = abap_true.
+          PERFORM write_file USING lv_societa p_pdirbk.
+        ENDIF.
+        msg = | - { lv_societa } : { lines( gt_tabstring ) } (cessati: { lv_cess_soc })|.
+        WRITE: / msg.
+      ENDIF.
+
+    ELSE.
+      WRITE: / |Split per società NON attivo|.
+      CLEAR: gt_tabstring, lv_cess_soc.
+      SORT gt_anag_dir BY societa ASCENDING cid ASCENDING.
+      LOOP AT gt_anag_dir INTO gw_anag.
+        IF gw_anag-persg = '4'.
+          ADD 1 TO lv_cess_soc.
+        ENDIF.
+        PERFORM build_output_line USING gw_anag.
+      ENDLOOP.
+      PERFORM write_file USING 'ALL' p_pdir.
+      IF p_dirbck = abap_true.
+        PERFORM write_file USING 'ALL' p_pdirbk.
+      ENDIF.
+      msg = | - tutte le società: { lines( gt_tabstring ) } (cessati: { lv_cess_soc })|.
+      WRITE: / msg.
+    ENDIF.
+
+  ENDIF.
+
+  " ============================================================
+  " 6. Output FILE UNICO (p_uniq attivo)
+  "    Ordine: dir attivi, dir cessati, dip attivi, dip cessati
+  "    Ciascun blocco ordinato per società e PERNR
+  " ============================================================
+  IF p_uniq = abap_true.
+    WRITE: /.
+    WRITE: / |___________________|.
+    WRITE: / |File unico - elaborazione:|.
+
+    CLEAR: gt_tabstring.
+
+    DATA: lt_dir_att  LIKE gt_anag,
+          lt_dir_cess LIKE gt_anag,
+          lt_dip_att  LIKE gt_anag,
+          lt_dip_cess LIKE gt_anag.
+
+    SORT gt_anag_dir BY societa ASCENDING cid ASCENDING.
+    SORT gt_anag_dip BY societa ASCENDING cid ASCENDING.
+
+    LOOP AT gt_anag_dir INTO gw_anag.
+        IF gw_anag-persg = '1'.
+        APPEND gw_anag TO lt_dir_att.
+      ELSE.
+        APPEND gw_anag TO lt_dir_cess.
+      ENDIF.
+    ENDLOOP.
+
+    LOOP AT gt_anag_dip INTO gw_anag.
+        IF gw_anag-persg = '1'.
+        APPEND gw_anag TO lt_dip_att.
+      ELSE.
+        APPEND gw_anag TO lt_dip_cess.
+      ENDIF.
+    ENDLOOP.
+
+    DATA: lv_cnt_dir_att  TYPE i,
+          lv_cnt_dir_cess TYPE i,
+          lv_cnt_dip_att  TYPE i,
+          lv_cnt_dip_cess TYPE i.
+
+    LOOP AT lt_dir_att  INTO gw_anag. PERFORM build_output_line USING gw_anag. ADD 1 TO lv_cnt_dir_att.  ENDLOOP.
+    LOOP AT lt_dir_cess INTO gw_anag. PERFORM build_output_line USING gw_anag. ADD 1 TO lv_cnt_dir_cess. ENDLOOP.
+    LOOP AT lt_dip_att  INTO gw_anag. PERFORM build_output_line USING gw_anag. ADD 1 TO lv_cnt_dip_att.  ENDLOOP.
+    LOOP AT lt_dip_cess INTO gw_anag. PERFORM build_output_line USING gw_anag. ADD 1 TO lv_cnt_dip_cess. ENDLOOP.
+
+    PERFORM write_file USING 'ALL' p_puniq.
+
+    " --- Riepilogo totali
+    WRITE: /.
+    msg = | - Dirigenti  attivi  : { lv_cnt_dir_att  }|. WRITE: / msg.
+    msg = | - Dirigenti  cessati : { lv_cnt_dir_cess }|. WRITE: / msg.
+    msg = | - Dipendenti attivi  : { lv_cnt_dip_att  }|. WRITE: / msg.
+    msg = | - Dipendenti cessati : { lv_cnt_dip_cess }|. WRITE: / msg.
+    msg = | - Totale             : { lines( gt_tabstring ) }|. WRITE: / msg.
+
+    " --- Analisi per società
+    WRITE: /.
+    WRITE: / |Dettaglio per società:|.
+
+    DATA: lt_soc_uniq TYPE TABLE OF bukrs,
+          lv_soc      TYPE bukrs.
+
+    LOOP AT gt_anag INTO DATA(ls_a).
+      APPEND ls_a-societa TO lt_soc_uniq.
+    ENDLOOP.
+    SORT lt_soc_uniq.
+    DELETE ADJACENT DUPLICATES FROM lt_soc_uniq.
+
+    DATA: lv_tot_soc      TYPE i,
+          lv_cess_soc_dir TYPE i,
+          lv_cess_soc_dip TYPE i,
+          lv_dir_soc      TYPE i,
+          lv_dip_soc      TYPE i.
+
+    LOOP AT lt_soc_uniq INTO lv_soc.
+      CLEAR: lv_tot_soc, lv_dir_soc, lv_dip_soc,
+             lv_cess_soc_dir, lv_cess_soc_dip.
+
+      LOOP AT gt_anag_dir INTO gw_anag WHERE societa = lv_soc.
+        ADD 1 TO lv_dir_soc.
+        IF gw_anag-persg = '4'. ADD 1 TO lv_cess_soc_dir. ENDIF.
+      ENDLOOP.
+
+      LOOP AT gt_anag_dip INTO gw_anag WHERE societa = lv_soc.
+        ADD 1 TO lv_dip_soc.
+        IF gw_anag-persg = '4'. ADD 1 TO lv_cess_soc_dip. ENDIF.
+      ENDLOOP.
+
+      lv_tot_soc = lv_dir_soc + lv_dip_soc.
+
+      msg = | { lv_soc } : totale { lv_tot_soc }| & |  [ dir: { lv_dir_soc } (cess: { lv_cess_soc_dir })| & |  dip: { lv_dip_soc } (cess: { lv_cess_soc_dip }) ]|.
+      WRITE: / msg.
+    ENDLOOP.
+
+  ENDIF.
+
+  " ============================================================
+  " 7. Riepilogo scarti e dettaglio
+  " ============================================================
+  WRITE: /.
+  WRITE: / |============================================================|.
+  WRITE: / |RIEPILOGO QUALITÀ DATI                                      |.
+  WRITE: / |============================================================|.
+  WRITE: /.
+  msg = | - CID totali estratti (totale in selezione)    : { lines( s_pernr ) }|.
+  WRITE: / msg.
+  WRITE: /.
+
+  msg = | - CID con errori bloccanti (scartati)          : { lv_cnt_err }|.
+  WRITE: / msg.
+  msg = | - CID con warning non bloccanti (mantenuti)    : { lv_cnt_wrn }|.
+  WRITE: / msg.
+  msg = | - CID eliminati per CF duplicato               : { lv_cnt_cf_dupl }|.
+  WRITE: / msg.
+  WRITE: /.
+  msg = | - CID usati per produrre i file                : { lines( gt_anag ) }|.
+  WRITE: / msg.
+  WRITE: /.
+  " Controllo di quadratura
+  DATA(lv_diff) = lines( s_pernr ) - lv_cnt_err - lines( gt_anag ) - lv_cnt_cf_dupl.
+  IF lv_diff <> 0.
+    msg = | ! ATTENZIONE: quadratura <> 0 : { lv_diff }|.
+    WRITE: / | - { lines( s_pernr ) } =? { lines( gt_anag ) } + { lv_cnt_err } + { lv_cnt_cf_dupl }|.
+    WRITE: / msg.
+  ELSE.
+    WRITE: / | - Quadratura OK ( { lines( s_pernr ) } = { lines( gt_anag ) } + { lv_cnt_err } + { lv_cnt_cf_dupl } )|.
+  ENDIF.
+  WRITE: / |============================================================|.
+
+  PERFORM scrivi_scarti.
+
+  " ============================================================
+  " 8. Invio mail di notifica (se abilitato)
+  " ============================================================
+  IF p_mail = abap_true AND ( s_rcpta[] IS NOT INITIAL OR s_rcptcc IS NOT INITIAL ).
+    WRITE: /.
+    WRITE: / |============================================================|.
+    WRITE: / |INVIO MAIL|.
+    WRITE: / |============================================================|.
+    PERFORM invia_mail USING lv_cnt_added
+                             lv_cnt_err
+                             lv_cnt_wrn
+                             lv_cnt_cf_dupl.
+
+  ENDIF.
