@@ -52,7 +52,7 @@ START-OF-SELECTION.
   IF go_run_calendar->validate_month_calendar( iv_ref_date = p_data ) = abap_false.
     go_run_calendar->add_log(
       iv_type = 'E'
-      iv_text = |Esecuzione interrotta: calendario run non congruo.| ).
+      iv_text = |Esecuzione interrotta: calendario run non congruo| ).
     go_run_calendar->save_bal( ).
     RETURN.
   ENDIF.

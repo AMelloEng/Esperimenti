@@ -73,6 +73,8 @@ CLASS lcl_run_calendar IMPLEMENTATION.
           lv_next_mon  TYPE dats,
           lv_last_day  TYPE dats,
           lv_prev_end  TYPE dats,
+          lv_eff_from  TYPE dats,
+          lv_eff_to    TYPE dats,
           lv_gap_from  TYPE dats,
           lv_gap_to    TYPE dats,
           lv_has_err   TYPE abap_bool VALUE abap_false.
@@ -115,20 +117,30 @@ CLASS lcl_run_calendar IMPLEMENTATION.
     lv_prev_end = lv_first_day - 1.
 
     LOOP AT lt_ctrl INTO DATA(ls_ctrl).
-      IF ls_ctrl-valid_from > lv_prev_end + 1.
+      lv_eff_from = ls_ctrl-valid_from.
+      lv_eff_to   = ls_ctrl-valid_to.
+
+      IF lv_eff_from < lv_first_day.
+        lv_eff_from = lv_first_day.
+      ENDIF.
+      IF lv_eff_to > lv_last_day.
+        lv_eff_to = lv_last_day.
+      ENDIF.
+
+      IF lv_eff_from > lv_prev_end + 1.
         lv_gap_from = lv_prev_end + 1.
-        lv_gap_to   = ls_ctrl-valid_from - 1.
+        lv_gap_to   = lv_eff_from - 1.
         lv_has_err = abap_true.
         add_log(
           iv_type = 'E'
           iv_text = |Buco calendario: { lv_gap_from } - { lv_gap_to }| ).
       ENDIF.
 
-      IF ls_ctrl-valid_from <= lv_prev_end.
+      IF lv_eff_from <= lv_prev_end.
         lv_has_err = abap_true.
         add_log(
           iv_type = 'E'
-          iv_text = |Sovrapposizione calendario da { ls_ctrl-valid_from } a { ls_ctrl-valid_to }| ).
+          iv_text = |Sovrapposizione calendario da { lv_eff_from } a { lv_eff_to }| ).
       ENDIF.
 
       IF ls_ctrl-run_mode <> gc_run_daily AND ls_ctrl-run_mode <> gc_run_order.
@@ -138,8 +150,8 @@ CLASS lcl_run_calendar IMPLEMENTATION.
           iv_text = |Run mode non valido ({ ls_ctrl-run_mode }) per intervallo { ls_ctrl-valid_from }-{ ls_ctrl-valid_to }| ).
       ENDIF.
 
-      IF ls_ctrl-valid_to > lv_prev_end.
-        lv_prev_end = ls_ctrl-valid_to.
+      IF lv_eff_to > lv_prev_end.
+        lv_prev_end = lv_eff_to.
       ENDIF.
     ENDLOOP.
 
@@ -163,7 +175,7 @@ CLASS lcl_run_calendar IMPLEMENTATION.
   METHOD is_run_mode_allowed.
     DATA: lt_ctrl       TYPE STANDARD TABLE OF ts_run_ctrl,
           lv_mode       TYPE char10,
-          lv_has_match  TYPE abap_bool VALUE abap_false,
+          lv_rows_day   TYPE i VALUE 0,
           lv_dist_modes TYPE i VALUE 0.
 
     rv_ok = abap_false.
@@ -188,9 +200,18 @@ CLASS lcl_run_calendar IMPLEMENTATION.
       RETURN.
     ENDIF.
 
+    lv_rows_day = lines( lt_ctrl ).
+
     SORT lt_ctrl BY run_mode valid_from valid_to.
     DELETE ADJACENT DUPLICATES FROM lt_ctrl COMPARING run_mode.
     lv_dist_modes = lines( lt_ctrl ).
+
+    IF lv_rows_day > 1 AND lv_dist_modes = 1.
+      add_log(
+        iv_type = 'E'
+        iv_text = |Configurazione non congrua: sovrapposizione intervalli con stessa modalità in data { iv_date }| ).
+      RETURN.
+    ENDIF.
 
     IF lv_dist_modes > 1.
       add_log(
@@ -201,10 +222,6 @@ CLASS lcl_run_calendar IMPLEMENTATION.
 
     READ TABLE lt_ctrl INTO DATA(ls_day) INDEX 1.
     IF sy-subrc = 0 AND ls_day-run_mode = lv_mode.
-      lv_has_match = abap_true.
-    ENDIF.
-
-    IF lv_has_match = abap_true.
       add_log(
         iv_type = 'S'
         iv_text = |Modalità { lv_mode } congrua con calendario in data { iv_date }| ).
@@ -382,10 +399,6 @@ ENDFORM.
 *& CONTROLLA INPUT
 *&---------------------------------------------------------------------*
 FORM controlla_input.
-
-  IF p_rdaily = abap_false AND p_rorder = abap_false.
-    MESSAGE e398(00) WITH 'Selezionare una modalità run: DAILY oppure ORDER'.
-  ENDIF.
 
   IF p_floc = abap_true AND p_fsrv = abap_true.
     MESSAGE e398(00) WITH 'File locale e file server non possono essere selezionati insieme'.
