@@ -1,0 +1,170 @@
+*&---------------------------------------------------------------------*
+*&  Include           ZHP_BP_ANAG_PWS_V2_T
+*&---------------------------------------------------------------------*
+
+TABLES: pa0001, pa0002.
+
+***TYPES: BEGIN OF ts_new_anag,
+***         societa      TYPE ztmit_anag-societa,
+***         codf         TYPE ztmit_anag-codf,
+***         cid          TYPE ztmit_anag-cid,
+***         nome         TYPE ztmit_anag-nome,
+***         cognome      TYPE ztmit_anag-cognome,
+***         tipo_dip     TYPE ztmit_anag-tipo_dip,
+***         upn          TYPE ztmit_anag-upn,
+***         desc_societa TYPE ztmit_anag-desc_societa,
+***         cod_amm      TYPE ztmit_anag-cod_amm,
+***         desc_amm     TYPE ztmit_anag-desc_amm,
+***         cod_fp       TYPE ztmit_anag-cod_fp,
+***         desc_fp      TYPE ztmit_anag-desc_fp,
+***       END OF ts_new_anag.
+***
+***DATA: gt_new_anag TYPE TABLE OF ts_new_anag,
+***      gs_new_anag LIKE LINE OF gt_new_anag.
+
+DATA ls_ztmit_anag TYPE ztmit_anag.
+
+TYPES: BEGIN OF ts_anag.
+         INCLUDE STRUCTURE ztmit_anag.
+         TYPES: begda TYPE datum.
+         TYPES: persg   TYPE persg,
+***TYPES: cessato TYPE abap_bool,
+       END OF ts_anag.
+
+DATA: gt_anag     TYPE TABLE OF ts_anag,
+      gt_anag_dip TYPE TABLE OF ts_anag,
+      gt_anag_dir TYPE TABLE OF ts_anag,
+***      tt_anag     TYPE TABLE OF ts_anag,
+      gw_anag     TYPE ts_anag.
+
+TYPES: BEGIN OF ts_tabstring,
+         line TYPE string,
+       END OF ts_tabstring.
+
+DATA: wa_string    TYPE          ts_tabstring,
+      gt_tabstring TYPE TABLE OF ts_tabstring.
+
+TYPES: BEGIN OF ts_pa0002,
+         pernr TYPE persno,
+         vorna TYPE pad_vorna,
+         nachn TYPE pad_nachn,
+         perid TYPE prdni.
+TYPES: END OF ts_pa0002.
+
+DATA: gt_pa0002 TYPE TABLE OF ts_pa0002,
+      gs_pa0002 TYPE          ts_pa0002.
+
+TYPES: BEGIN OF ts_pa0105,
+         pernr TYPE persno,
+         zmail TYPE text60.
+TYPES: END OF ts_pa0105.
+
+DATA: gt_pa0105 TYPE TABLE OF ts_pa0105,
+      gs_pa0105 TYPE          ts_pa0105.
+
+TYPES: BEGIN OF ts_pa0001,
+         pernr TYPE persno,
+         begda type begda,
+         bukrs TYPE bukrs,
+         werks TYPE persa,
+         persg TYPE persg,
+         persk TYPE persk,
+         orgeh TYPE orgeh.
+TYPES: END OF ts_pa0001.
+
+DATA: gt_pa0001 TYPE TABLE OF ts_pa0001,
+      gs_pa0001 TYPE          ts_pa0001.
+
+" ts_input: semplice contenitore PERNR, senza flag cessato
+TYPES: BEGIN OF ts_input,
+         pernr TYPE persno,
+         begda TYPE begda,
+         endda TYPE endda,
+         persg TYPE persg.
+TYPES: END OF ts_input.
+
+DATA: gt_input TYPE TABLE OF ts_input,
+      wa_input LIKE LINE OF  gt_input.
+
+" Tabella hashed dei PERNR cessati nel periodo
+" (popolata da GET_PERNR_CESSATI, usata in CARICA_ANAGRAFICA)
+DATA: gt_cessati TYPE HASHED TABLE OF ts_input
+                 WITH UNIQUE KEY pernr.
+
+DATA: gt_cessati_2 TYPE TABLE OF ts_input.
+
+" Tabella hashed dei PERNR attivi alla data di riferimento
+" (popolata da GET_PERNR_ATTIVI, usata in CARICA_ANAGRAFICA)
+" Se un PERNR è sia in gt_cessati che in gt_attivi -> prevale attivo
+DATA: gt_attivi TYPE HASHED TABLE OF ts_input
+                WITH UNIQUE KEY pernr.
+
+* ---- Lookup tables pre-caricate per ottimizzazione ----
+TYPES: BEGIN OF ts_t001,
+         bukrs TYPE bukrs,
+         butxt TYPE butxt.
+TYPES: END OF ts_t001.
+DATA: gt_t001 TYPE TABLE OF ts_t001.
+
+TYPES: BEGIN OF ts_werks_text,
+         werks TYPE persa,
+         name1 TYPE t500p-name1.
+TYPES: END OF ts_werks_text.
+DATA: gt_werks_text TYPE TABLE OF ts_werks_text.
+
+TYPES: BEGIN OF ts_fp,
+         orgeh   TYPE orgeh,
+         cod_fp  TYPE hrp9202-focal_point,
+         desc_fp TYPE zmdit129-descr.
+TYPES: END OF ts_fp.
+DATA: gt_fp TYPE TABLE OF ts_fp.
+
+DATA: msg TYPE string.
+
+" flag per tracciare lo stato precedente di p_uniq
+DATA: gv_uniq_prev TYPE abap_bool VALUE abap_false.
+
+" ---- Tabella scarti (errori bloccanti e warning) ----
+TYPES: BEGIN OF ts_scarto,
+         pernr     TYPE persno,
+         bukrs     TYPE bukrs,        " <-- NUOVO
+         tipo      TYPE c LENGTH 1,   " 'E' = errore bloccante, 'W' = warning
+         messaggio TYPE string,
+       END OF ts_scarto.
+
+DATA: gt_scarti TYPE TABLE OF ts_scarto,
+      gs_scarto TYPE          ts_scarto.
+
+CONSTANTS: gc_run_daily TYPE char10 VALUE 'DAILY',
+           gc_run_order TYPE char10 VALUE 'ORDER'.
+
+TYPES: BEGIN OF ts_run_ctrl,
+         valid_from TYPE dats,
+         valid_to   TYPE dats,
+         run_mode   TYPE char10,
+         category   TYPE char20,
+         active     TYPE char1,
+       END OF ts_run_ctrl.
+
+CLASS lcl_run_calendar DEFINITION FINAL.
+  PUBLIC SECTION.
+    METHODS: constructor,
+      validate_month_calendar
+        IMPORTING iv_ref_date TYPE dats
+        RETURNING VALUE(rv_ok) TYPE abap_bool,
+      is_run_mode_allowed
+        IMPORTING
+          iv_date TYPE dats
+          iv_mode TYPE char10
+        RETURNING VALUE(rv_ok) TYPE abap_bool,
+      add_log
+        IMPORTING
+          iv_type TYPE symsgty
+          iv_text TYPE string,
+      save_bal.
+  PRIVATE SECTION.
+    DATA: mv_log_handle TYPE balloghndl.
+    METHODS init_bal.
+ENDCLASS.
+
+DATA go_run_calendar TYPE REF TO lcl_run_calendar.
