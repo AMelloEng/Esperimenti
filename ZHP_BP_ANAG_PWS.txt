@@ -14,6 +14,7 @@ REPORT zhr_bp_anag_pws.
 *&---------------------------------------------------------------------*
 
 INCLUDE zhr_bp_anag_pws_t.
+INCLUDE zhr_bp_anag_pws_cl.
 INCLUDE zhr_bp_anag_pws_s.
 INCLUDE zhr_bp_anag_pws_f.
 
@@ -36,6 +37,38 @@ AT SELECTION-SCREEN.
 
 
 START-OF-SELECTION.
+
+  "Introdotto gestione anagrafiche giornaliere in base a calendario (dbtab  ZHR_BP_RUN_CAL)
+  DATA(lv_run_mode) = COND char10(
+                         WHEN p_rdaily = abap_true THEN gc_run_daily
+                         WHEN p_rorder = abap_true THEN gc_run_order
+                         WHEN p_rfree = abap_true THEN gc_run_free
+                         ELSE gc_run_daily ).   "
+  CREATE OBJECT go_run_calendar.
+***  go_run_calendar->add_log(
+***    iv_type = 'I'
+***    iv_text = |Verifica calendario run per data { p_data } e modalità { lv_run_mode }| ).
+
+  CASE lv_run_mode.
+    WHEN gc_run_daily.
+      " check calendario: se oggi è giorno ordine, non produce nulla
+      IF go_run_calendar->is_tipo_run_allowed( iv_date = sy-datum
+                                               iv_mode = lv_run_mode ) = abap_false.
+***        WRITE: / |ATTENZIONE:|.
+***        WRITE: / |Giorno { sy-datum DATE = ISO }: produzione ordini BP - report anagrafica totale sospeso.|.
+***        WRITE: / |Controllare la tabella ZHR_BP_RUN_CAL|.
+        go_run_calendar->save_bal( ).
+        STOP.
+      ENDIF.
+      " ... estrazione anagrafica TOTALE, invariata ...
+    WHEN gc_run_order.
+      " estrazione filtrata sui soli dipendenti con ordine BP presente da effettuare con file csv locale o server con elenco di PERNR
+      " ... join/select su tabella ordini + anagrafica ...
+    WHEN gc_run_free.
+      " nessun controllo calendario, nessun filtro automatico
+      " parametri di selezione (data/PERNR/range) interamente a discrezione utente
+      " ... estrazione secondo selection-screen standard ...
+  ENDCASE.
 
   PERFORM scrivi_parametri_selezione.
 ***  PERFORM carica_cid_per_societa.
@@ -372,7 +405,7 @@ START-OF-SELECTION.
     SORT gt_anag_dip BY societa ASCENDING cid ASCENDING.
 
     LOOP AT gt_anag_dir INTO gw_anag.
-        IF gw_anag-persg = '1'.
+      IF gw_anag-persg = '1'.
         APPEND gw_anag TO lt_dir_att.
       ELSE.
         APPEND gw_anag TO lt_dir_cess.
@@ -380,7 +413,7 @@ START-OF-SELECTION.
     ENDLOOP.
 
     LOOP AT gt_anag_dip INTO gw_anag.
-        IF gw_anag-persg = '1'.
+      IF gw_anag-persg = '1'.
         APPEND gw_anag TO lt_dip_att.
       ELSE.
         APPEND gw_anag TO lt_dip_cess.

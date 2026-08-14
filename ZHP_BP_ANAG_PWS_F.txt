@@ -117,6 +117,10 @@ FORM gestisci_screen.
 
   LOOP AT SCREEN.
 
+    IF screen-name = 'P_PERIO'.
+      screen-input = 0.
+    ENDIF.
+
     IF p_uniq = abap_true.
       IF screen-name = 'P_SPLIT' OR
          screen-name = 'P_DIP'   OR

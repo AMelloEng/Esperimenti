@@ -4,6 +4,10 @@
 
 TABLES: pa0001, pa0002.
 
+CONSTANTS: gc_run_daily TYPE char10 VALUE 'DAILY',
+           gc_run_order TYPE char10 VALUE 'WALLET',
+           gc_run_free  TYPE char10 VALUE 'FREE'.
+
 ***TYPES: BEGIN OF ts_new_anag,
 ***         societa      TYPE ztmit_anag-societa,
 ***         codf         TYPE ztmit_anag-codf,

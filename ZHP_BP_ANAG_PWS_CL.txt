@@ -1,0 +1,240 @@
+*&---------------------------------------------------------------------*
+*&  Include           ZHR_BP_ANAG_PWS_CL
+*&---------------------------------------------------------------------*
+
+CLASS lcl_run_calendar DEFINITION FINAL.
+  PUBLIC SECTION.
+    METHODS: constructor,
+
+      validate_month_calendar
+        IMPORTING iv_ref_date  TYPE dats
+        RETURNING VALUE(rv_ok) TYPE abap_bool,
+
+      is_tipo_run_allowed
+        IMPORTING
+                  iv_date      TYPE dats
+                  iv_mode      TYPE char10
+        RETURNING VALUE(rv_ok) TYPE abap_bool,
+
+      add_log
+        IMPORTING
+          iv_type TYPE symsgty
+          iv_text TYPE C,"TYPE string,
+
+      save_bal.
+
+  PRIVATE SECTION.
+    DATA: mv_log_handle TYPE balloghndl.
+    METHODS init_bal.
+ENDCLASS.
+
+CLASS lcl_run_calendar IMPLEMENTATION.
+
+  METHOD constructor.
+    init_bal( ).
+  ENDMETHOD.
+
+  METHOD init_bal.
+    DATA ls_log TYPE bal_s_log.
+
+    ls_log-object    = 'ZHR_BP'.
+    ls_log-subobject = 'ANAG_PWS_D'.
+    ls_log-extnumber = |RUN { sy-datum } { sy-uzeit }|.
+
+    CALL FUNCTION 'BAL_LOG_CREATE'
+      EXPORTING
+        i_s_log      = ls_log
+      IMPORTING
+        e_log_handle = mv_log_handle
+      EXCEPTIONS
+        OTHERS       = 1.
+  ENDMETHOD.
+
+  METHOD add_log.
+    DATA: ls_msg TYPE bal_s_msg,
+          lv_msg TYPE string.
+
+    lv_msg = iv_text.
+    WRITE: / lv_msg.
+
+    IF mv_log_handle IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    ls_msg-msgty = iv_type.
+    ls_msg-msgid = '00'.
+    ls_msg-msgno = '398'.
+    ls_msg-msgv1 = lv_msg.
+
+***    CALL FUNCTION 'BAL_LOG_MSG_ADD'
+***      EXPORTING
+***        i_log_handle = mv_log_handle
+***        i_s_msg      = ls_msg
+***      EXCEPTIONS
+***        OTHERS       = 1.
+
+    CALL FUNCTION 'BAL_LOG_MSG_ADD_FREE_TEXT'
+      EXPORTING
+        i_log_handle = mv_log_handle
+        i_msgty      = iv_type
+        i_text       = iv_text
+      EXCEPTIONS
+        OTHERS       = 1.
+
+  ENDMETHOD.
+
+  METHOD validate_month_calendar.
+    DATA: lt_run_cal   TYPE STANDARD TABLE OF zhr_bp_run_cal,
+          lv_first_day TYPE dats,
+          lv_next_mon  TYPE dats,
+          lv_last_day  TYPE dats,
+          lv_prev_end  TYPE dats,
+          lv_eff_from  TYPE dats,
+          lv_eff_to    TYPE dats,
+          lv_gap_from  TYPE dats,
+          lv_gap_to    TYPE dats,
+          lv_has_err   TYPE abap_bool VALUE abap_false.
+
+    rv_ok = abap_false.
+    lv_first_day       = iv_ref_date.
+    lv_first_day+6(02) = '01'.
+
+    CALL FUNCTION 'RP_CALC_DATE_IN_INTERVAL'
+      EXPORTING
+        date      = lv_first_day
+        days      = 0
+        months    = 1
+        years     = 0
+        signum    = '+'
+      IMPORTING
+        calc_date = lv_next_mon.
+
+    lv_last_day = lv_next_mon - 1.
+
+    SELECT * FROM zhr_bp_run_cal INTO TABLE lt_run_cal
+      WHERE attivo     = 'X'
+        AND endda   >= lv_first_day
+        AND begda <= lv_last_day.
+
+    IF lt_run_cal IS INITIAL.
+      add_log(
+        iv_type = 'E'
+        iv_text = |Calendario zhr_bp_run_cal assente nel mese { lv_first_day+0(6) }| ).
+      RETURN.
+    ENDIF.
+
+    SORT lt_run_cal BY begda endda.
+    lv_prev_end = lv_first_day - 1.
+
+    LOOP AT lt_run_cal INTO DATA(ls_run_cal).
+      lv_eff_from = ls_run_cal-begda.
+      lv_eff_to   = ls_run_cal-endda.
+
+      IF lv_eff_from < lv_first_day.
+        lv_eff_from = lv_first_day.
+      ENDIF.
+      IF lv_eff_to > lv_last_day.
+        lv_eff_to = lv_last_day.
+      ENDIF.
+
+***      IF lv_eff_from > lv_prev_end + 1.
+***        lv_gap_from = lv_prev_end + 1.
+***        lv_gap_to   = lv_eff_from - 1.
+***        lv_has_err = abap_true.
+***        add_log(
+***          iv_type = 'E'
+***          iv_text = |Buco calendario: { lv_gap_from } - { lv_gap_to }| ).
+***      ENDIF.
+
+      IF lv_eff_from <= lv_prev_end.
+        lv_has_err = abap_true.
+        add_log(
+          iv_type = 'E'
+          iv_text = |Sovrapposizione calendario da { lv_eff_from } a { lv_eff_to }| ).
+      ENDIF.
+
+***      IF ls_run_cal-tipo_run <> gc_run_daily AND ls_run_cal-tipo_run <> gc_run_order.
+***        lv_has_err = abap_true.
+***        add_log(
+***          iv_type = 'E'
+***          iv_text = |Run mode non valido ({ ls_run_cal-tipo_run }) per intervallo { ls_run_cal-begda }-{ ls_run_cal-endda }| ).
+***      ENDIF.
+
+      IF lv_eff_to > lv_prev_end.
+        lv_prev_end = lv_eff_to.
+      ENDIF.
+    ENDLOOP.
+
+    IF lv_prev_end < lv_last_day.
+      lv_gap_from = lv_prev_end + 1.
+      lv_gap_to   = lv_last_day.
+      lv_has_err = abap_true.
+      add_log(
+        iv_type = 'E'
+        iv_text = |Buco calendario finale: { lv_gap_from } - { lv_gap_to }| ).
+    ENDIF.
+
+    IF lv_has_err = abap_false.
+      add_log(
+        iv_type = 'S'
+        iv_text = |Calendario run valido per mese { lv_first_day+0(6) }| ).
+      rv_ok = abap_true.
+    ENDIF.
+  ENDMETHOD.
+
+  METHOD is_tipo_run_allowed.
+    DATA: lt_run_cal  TYPE STANDARD TABLE OF zhr_bp_run_cal,
+          lv_mode     TYPE char10,
+          lv_rows_cal TYPE i VALUE 0.
+
+    rv_ok = abap_false.
+    lv_mode = iv_mode.
+    TRANSLATE lv_mode TO UPPER CASE.
+
+    SELECT * FROM zhr_bp_run_cal INTO TABLE lt_run_cal
+      WHERE periodo = iv_date(6)
+        AND begda  <= iv_date
+        AND endda  >= iv_date
+        AND attivo  = 'X'.
+
+    SORT lt_run_cal BY periodo begda endda.
+    lv_rows_cal = lines( lt_run_cal ).
+
+***    IF lv_rows_cal > 1.
+***      add_log(
+***        iv_type = 'E'
+***        iv_text = |Configurazione non congrua: sovrapposizione intervalli con stessa modalità in data { iv_date }| ).
+***      RETURN.
+***    ENDIF.
+
+    READ TABLE lt_run_cal INTO DATA(ls_day) INDEX 1.
+    "ho chiesto anagr. giornalòiera e oggi è previsto il rilascio dei file ordini; allora non permetto la generazione delle anagrafiche full
+    IF iv_mode = gc_run_daily AND lv_rows_cal >= 1.
+      rv_ok = abap_false.
+      add_log(
+              iv_type = 'W'
+              iv_text = |Giorno { sy-datum DATE = ISO }: produzione ordini BP - report anagrafica totale sospeso.| ). " |Generazione WALLET in corso, flusso anagrafica giornaliera sospeso| ).
+      add_log(
+              iv_type = 'I'
+              iv_text = |Controllare la tabella ZHR_BP_RUN_CAL| ).
+      RETURN.
+    ENDIF.
+
+  ENDMETHOD.
+
+  METHOD save_bal.
+    IF mv_log_handle IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    CALL FUNCTION 'BAL_DB_SAVE'
+      EXPORTING
+        i_save_all = abap_true
+      EXCEPTIONS
+        OTHERS     = 1.
+  ENDMETHOD.
+
+ENDCLASS.
+
+
+DATA go_run_calendar TYPE REF TO lcl_run_calendar.
