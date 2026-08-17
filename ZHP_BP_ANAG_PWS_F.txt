@@ -316,6 +316,18 @@ ENDFORM.
 *&---------------------------------------------------------------------*
 FORM gestisci_screen.
 
+  IF p_rorder = abap_true AND gv_rorder_prev = abap_false.
+    gv_atti_prev   = p_atti.
+    gv_cess_prev   = p_cess.
+    p_atti         = abap_false.
+    p_cess         = abap_false.
+    gv_rorder_prev = abap_true.
+  ELSEIF p_rdaily = abap_true AND gv_rorder_prev = abap_true.
+    p_atti         = gv_atti_prev.
+    p_cess         = gv_cess_prev.
+    gv_rorder_prev = abap_false.
+  ENDIF.
+
   IF p_dip = abap_false.
     p_dipbck = abap_false.
   ENDIF.
@@ -342,6 +354,10 @@ FORM gestisci_screen.
   ENDIF.
 
   LOOP AT SCREEN.
+
+    IF screen-name = 'P_ATTI' OR screen-name = 'P_CESS'.
+      screen-input = COND #( WHEN p_rdaily = abap_true THEN 1 ELSE 0 ).
+    ENDIF.
 
     IF p_uniq = abap_true.
       IF screen-name = 'P_SPLIT' OR
@@ -1253,9 +1269,9 @@ FORM scrivi_parametri_selezione.
   WRITE: / msg.
 
   IF p_rdaily = abap_true.
-    WRITE: / | Modalità run       : DAILY|.
+    WRITE: / | Modalità run       : { gc_run_daily }|.
   ELSE.
-    WRITE: / | Modalità run       : ORDER|.
+    WRITE: / | Modalità run       : { gc_run_order }|.
   ENDIF.
 
   WRITE: /.

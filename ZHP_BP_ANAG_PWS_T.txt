@@ -123,6 +123,9 @@ DATA: msg TYPE string.
 
 " flag per tracciare lo stato precedente di p_uniq
 DATA: gv_uniq_prev TYPE abap_bool VALUE abap_false.
+DATA: gv_rorder_prev TYPE abap_bool VALUE abap_false,
+      gv_atti_prev   TYPE abap_bool VALUE abap_true,
+      gv_cess_prev   TYPE abap_bool VALUE abap_true.
 
 " ---- Tabella scarti (errori bloccanti e warning) ----
 TYPES: BEGIN OF ts_scarto,
